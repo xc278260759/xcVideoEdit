@@ -131,7 +131,7 @@
         <button id="btnNext" class="btn icon" title="下一帧（→）" disabled>▶</button>
         <button id="btnMute" class="btn icon mute-on" title="静音开关（当前：静音）">🔇</button>
         <span class="time-read"><b id="timeNow">00:00.00</b> / <span id="timeDur">00:00.00</span></span>
-        <span class="keys-hint">空格播放 · ←/→ 逐帧 · C 切割 · Shift+滚轮缩放 · Alt+滚轮平移</span>
+        <span class="keys-hint">空格播放 · ←/→ 逐帧 · C 切割 · F 缩放到选中段 · Shift+滚轮缩放 · 滚轮/Alt+滚轮平移</span>
         <div class="spacer"></div>
         <button id="btnFitAll" class="btn tiny" title="显示完整片段（Home）" disabled>显示全部</button>
         <span class="view-info" id="viewInfo" title="当前视图范围">全片</span>
@@ -144,7 +144,18 @@
           <div class="thumbs" id="thumbs"></div>
           <div class="track" id="track"></div>
           <div class="playhead" id="playhead" hidden></div>
+          <div class="snap-line" id="snapLine" hidden></div>
         </div>
+      </div>
+
+      <div class="seqbar" id="seqbar">
+        <div class="seq-head">
+          <span class="seq-title">成片序列</span>
+          <span class="seq-info" id="seqInfo">—</span>
+          <div class="spacer"></div>
+          <span class="seq-hint">拖动片段改顺序 · 拖两端改时长 · 双击缩放到该段</span>
+        </div>
+        <div class="seq-track" id="seqTrack"></div>
       </div>
 
       <section class="clip-panel">

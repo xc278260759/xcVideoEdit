@@ -40,6 +40,9 @@ const els = {
   ruler: $('ruler'),
   track: $('track'),
   playhead: $('playhead'),
+  snapLine: $('snapLine'),
+  seqTrack: $('seqTrack'),
+  seqInfo: $('seqInfo'),
   viewInfo: $('viewInfo'),
   btnFitAll: $('btnFitAll'),
   timeNow: $('timeNow'),
@@ -64,7 +67,7 @@ const MIN_PX = 24
 const state = {
   file: null,
   info: null,
-  cuts: [],
+  segs: [],
   selected: new Set(),
   playhead: 0,
   mode: 'lossless',
@@ -81,7 +84,9 @@ const state = {
   outHeightManual: false,
   outHeightDirty: false,
   view: { start: 0, span: 0 },
-  drag: null
+  drag: null,
+  seqDrag: null,
+  edgeDrag: null
 }
 
 /* ------------------------------------------------------------------ */
@@ -107,6 +112,7 @@ function toXcUrl (path) {
 
 function fmtTime (sec, ms = true) {
   sec = Math.max(0, sec || 0)
+  sec = ms ? Math.round(sec * 100) / 100 : Math.floor(sec)
   const h = Math.floor(sec / 3600)
   const m = Math.floor(sec / 60) % 60
   const s = sec % 60
@@ -114,7 +120,7 @@ function fmtTime (sec, ms = true) {
     String(m).padStart(2, '0') + ':' +
     String(Math.floor(s)).padStart(2, '0')
   if (!ms) return base
-  return base + '.' + String(Math.floor((s % 1) * 100)).padStart(2, '0')
+  return base + '.' + String(Math.floor((s % 1) * 100 + 0.0001)).padStart(2, '0')
 }
 
 function fmtDur (sec) {
@@ -228,21 +234,35 @@ function followPlayhead (t) {
 /* 片段模型                                                            */
 /* ------------------------------------------------------------------ */
 
+const MIN_SEG = 0.02
+
+// 片段数组就是成片顺序：segs[0] 最先导出，重排只改数组顺序，不改源时间
 function segments () {
-  const dur = duration()
-  if (!dur) return []
-  const cuts = state.cuts.filter(t => t > 0.02 && t < dur - 0.02).sort((a, b) => a - b)
-  const pts = [0, ...cuts, dur]
-  const list = []
-  for (let i = 0; i < pts.length - 1; i++) {
-    list.push({
-      index: i,
-      start: pts[i],
-      end: pts[i + 1],
-      selected: state.selected.has(i)
-    })
-  }
-  return list
+  return state.segs.map((s, i) => ({
+    index: i,
+    start: s.start,
+    end: s.end,
+    selected: state.selected.has(i)
+  }))
+}
+
+function segTotal () {
+  return state.segs.reduce((a, s) => a + Math.max(0, s.end - s.start), 0)
+}
+
+function segAt (t) {
+  return state.segs.findIndex(s => t >= s.start && t <= s.end)
+}
+
+// 重排/切割/合并后按数组身份重算选择集合
+function remapSelection (beforeSegs, beforeSel) {
+  const oldIndex = new Map(beforeSegs.map((s, i) => [s, i]))
+  const next = new Set()
+  state.segs.forEach((s, i) => {
+    const oi = oldIndex.get(s)
+    if (oi !== undefined && beforeSel.has(oi)) next.add(i)
+  })
+  state.selected = next
 }
 
 /* ------------------------------------------------------------------ */
@@ -253,7 +273,7 @@ const hist = { past: [], future: [], limit: 100 }
 
 function snapshotState () {
   return {
-    cuts: state.cuts.slice(),
+    segs: state.segs.map(s => ({ start: s.start, end: s.end })),
     selected: [...state.selected],
     sel: { ...state.sel },
     outHeight: state.outHeight,
@@ -273,7 +293,7 @@ function pushUndo () {
 }
 
 function restoreSnapshot (s) {
-  state.cuts = s.cuts.slice()
+  state.segs = (s.segs || []).map(x => ({ start: x.start, end: x.end }))
   state.selected = new Set(s.selected)
   state.sel = { ...s.sel }
   state.outHeight = s.outHeight
@@ -337,6 +357,7 @@ function applyClickSelect (i, e) {
     state.selected = next
   }
   renderTimeline()
+  renderSeq()
   renderList()
   renderStatus()
   return true
@@ -349,6 +370,7 @@ function applyClickSelect (i, e) {
 function renderAll () {
   renderRuler()
   renderTimeline()
+  renderSeq()
   renderList()
   renderStatus()
   updatePlayhead()
@@ -396,16 +418,20 @@ function renderRuler () {
 function renderTimeline () {
   const dur = duration()
   const span = viewSpan()
-  els.track.innerHTML = ''
+  const pxPerSec = els.track.clientWidth / Math.max(0.001, span)
+  for (const node of [...els.track.children]) {
+    if (node !== els.snapLine) node.remove()
+  }
   if (!dur || !span) return
 
   segments().forEach((seg, i) => {
     const el = document.createElement('div')
     el.className = 'clip' + (i % 2 ? ' alt' : '') + (seg.selected ? ' on' : ' no')
+    el.dataset.i = String(i)
     el.style.left = tToPct(seg.start) + '%'
     el.style.width = ((seg.end - seg.start) / span * 100) + '%'
     if (seg.start < viewStart() - 0.001) el.classList.add('head-cut')
-    el.title = `片段 ${i + 1}  ${fmtTime(seg.start)} → ${fmtTime(seg.end)}`
+    el.title = `输出第 ${i + 1} 段 · 源 ${fmtTime(seg.start)} → ${fmtTime(seg.end)}\n拖两端改时长，拖成片序列里的块可改顺序`
 
     const no = document.createElement('span')
     no.className = 'clip-no'
@@ -415,7 +441,25 @@ function renderTimeline () {
     d.className = 'clip-dur'
     d.textContent = fmtDur(seg.end - seg.start)
 
-    el.append(no, d)
+    const lh = document.createElement('i')
+    lh.className = 'clip-edge l'
+    lh.title = '拖动改变这段的起点'
+    lh.addEventListener('pointerdown', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      beginEdge(i, 'start', e, pxPerSec)
+    })
+
+    const rh = document.createElement('i')
+    rh.className = 'clip-edge r'
+    rh.title = '拖动改变这段的终点'
+    rh.addEventListener('pointerdown', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      beginEdge(i, 'end', e, pxPerSec)
+    })
+
+    el.append(no, d, lh, rh)
 
     // Alt / Shift 点选：只改选择，不触发时间轴拖动
     el.addEventListener('pointerdown', e => {
@@ -430,11 +474,250 @@ function renderTimeline () {
       applyClickSelect(i, e)
       seekTo(seg.start)
     })
+    el.addEventListener('dblclick', e => {
+      e.stopPropagation()
+      zoomToSegment(i)
+    })
 
     els.track.appendChild(el)
   })
 
   updatePlayhead()
+}
+
+/* ---------------- 成片序列（输出顺序视图） ---------------- */
+
+function renderSeq () {
+  const track = els.seqTrack
+  if (!track) return
+  track.innerHTML = ''
+  const total = segTotal()
+
+  if (!state.segs.length || !total) {
+    track.innerHTML = '<div class="seq-empty">打开素材后，这里按成片顺序排列所有片段</div>'
+    if (els.seqInfo) els.seqInfo.textContent = '—'
+    return
+  }
+
+  const dur = duration()
+  const list = segments()
+  const chosen = list.filter(s => s.selected)
+
+  const fixedPps = state.edgeDrag && state.edgeDrag.source === 'seq' ? state.edgeDrag.pps : 0
+  const pps = fixedPps || (track.clientWidth / Math.max(0.001, total))
+
+  let cum = 0
+  list.forEach((seg, i) => {
+    const d = Math.max(0, seg.end - seg.start)
+    const el = document.createElement('div')
+    el.className = 'seq-clip' + (i % 2 ? ' alt' : '') + (seg.selected ? ' on' : ' no')
+    el.dataset.i = String(i)
+    el.style.left = (cum * pps) + 'px'
+    el.style.width = Math.max(2, d * pps) + 'px'
+    el.title = `输出第 ${i + 1} 段 · 源 ${fmtTime(seg.start)} → ${fmtTime(seg.end)} · ${fmtDur(d)}`
+    if (d * pps < 64) el.classList.add('tight')
+
+    const no = document.createElement('span')
+    no.className = 'seq-no'
+    no.textContent = i + 1
+    const dl = document.createElement('span')
+    dl.className = 'seq-dur'
+    dl.textContent = fmtDur(d)
+    el.append(no, dl)
+
+    const lh = document.createElement('i')
+    lh.className = 'seq-edge l'
+    lh.title = '拖这里改本段起点'
+    lh.addEventListener('pointerdown', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      beginEdge(i, 'start', e, pps, 'seq')
+    })
+
+    const rh = document.createElement('i')
+    rh.className = 'seq-edge r'
+    rh.title = '拖这里改本段终点'
+    rh.addEventListener('pointerdown', e => {
+      e.preventDefault()
+      e.stopPropagation()
+      beginEdge(i, 'end', e, pps, 'seq')
+    })
+
+    el.append(lh, rh)
+
+    el.addEventListener('pointerdown', e => {
+      if (e.button !== 0 || state.exporting) return
+      if (e.altKey || e.shiftKey) return
+      e.preventDefault()
+      e.stopPropagation()
+      state.seqDrag = {
+        from: i,
+        startX: e.clientX,
+        moved: false,
+        insert: null,
+        pps,
+        el
+      }
+    })
+
+    el.addEventListener('click', e => {
+      if (state.suppressSeqClick) {
+        state.suppressSeqClick = false
+        return
+      }
+      if (e.altKey || e.shiftKey) {
+        e.stopPropagation()
+        applyClickSelect(i, e)
+        seekTo(seg.start)
+        return
+      }
+      if (!state.selected.has(i)) {
+        pushUndo()
+        state.selected = new Set([i])
+      }
+      renderTimeline()
+      renderSeq()
+      renderList()
+      renderStatus()
+      seekTo(seg.start)
+    })
+
+    el.addEventListener('dblclick', e => {
+      e.stopPropagation()
+      zoomToSegment(i)
+    })
+
+    track.appendChild(el)
+    cum += d
+  })
+
+  if (els.seqInfo) {
+    els.seqInfo.textContent = `${list.length} 段 · 已选 ${chosen.length} 段 · 成片 ${fmtDur(total)}` +
+      (dur ? ` · 源 ${fmtTime(dur, false)}` : '')
+  }
+}
+
+function zoomToSegment (i, pad = 0.08) {
+  const s = state.segs[i]
+  if (!s) return
+  const d = Math.max(0.05, s.end - s.start)
+  const extra = Math.max(0.15, d * pad)
+  setView(s.start - extra, d + extra * 2)
+  seekTo(s.start)
+}
+
+function zoomToSelection () {
+  const picked = state.segs.filter((s, i) => state.selected.has(i))
+  if (!picked.length) {
+    const i = segAt(state.playhead)
+    if (i >= 0) zoomToSegment(i)
+    return
+  }
+  const a = Math.min(...picked.map(s => s.start))
+  const b = Math.max(...picked.map(s => s.end))
+  const pad = Math.max(0.1, (b - a) * 0.06)
+  setView(a - pad, (b - a) + pad * 2)
+  seekTo(a)
+}
+
+/* ---------------- 拖边缘改时长 ---------------- */
+
+function beginEdge (i, side, e, pps, source = 'track') {
+  if (state.exporting || !state.segs[i]) return
+  pushUndo()
+  const seg = state.segs[i]
+  // 源时间上跟本段相接的另一段：拖切点时同步它的边界，保证不留缝不重叠
+  let sib = -1
+  if (side === 'start') {
+    sib = state.segs.findIndex((o, k) => k !== i && Math.abs(o.end - seg.start) < 0.004)
+  } else {
+    sib = state.segs.findIndex((o, k) => k !== i && Math.abs(o.start - seg.end) < 0.004)
+  }
+  const sibSeg = sib >= 0 ? state.segs[sib] : null
+
+  state.edgeDrag = {
+    i,
+    side,
+    source,
+    startX: e.clientX,
+    pps,
+    origStart: seg.start,
+    origEnd: seg.end,
+    sib,
+    sibStart: sibSeg ? sibSeg.start : 0,
+    sibEnd: sibSeg ? sibSeg.end : 0,
+    segsBefore: state.segs.map(s => ({ start: s.start, end: s.end })),
+    selBefore: new Set(state.selected),
+    undoIndex: hist.past.length,
+    changed: false
+  }
+  els.track.classList.add('edge-dragging')
+  try { els.timeline.setPointerCapture?.(e.pointerId) } catch {}
+}
+
+function updateEdge (e) {
+  const d = state.edgeDrag
+  if (!d) return
+  const seg = state.segs[d.i]
+  if (!seg) return
+
+  let dt = (e.clientX - d.startX) / Math.max(0.5, d.pps)
+  let v = d.side === 'start' ? d.origStart + dt : d.origEnd + dt
+
+  // 吸附：播放头 / 首尾，阈值 7px
+  const snapTargets = [0, duration(), state.playhead]
+  if (d.sib >= 0) {
+    const o = state.segs[d.sib]
+    if (o) snapTargets.push(d.side === 'start' ? o.end : o.start)
+  }
+  const thresh = 7 / Math.max(0.5, d.pps)
+  let snapped = null
+  for (const t of snapTargets) {
+    if (!Number.isFinite(t)) continue
+    if (Math.abs(v - t) <= thresh) { v = t; snapped = t; break }
+  }
+
+  if (d.side === 'start') {
+    v = clamp(v, 0, seg.end - MIN_SEG)
+    seg.start = v
+    if (d.sib >= 0 && state.segs[d.sib]) {
+      state.segs[d.sib].end = clamp(v, state.segs[d.sib].start + MIN_SEG, duration())
+    }
+  } else {
+    v = clamp(v, seg.start + MIN_SEG, duration())
+    seg.end = v
+    if (d.sib >= 0 && state.segs[d.sib]) {
+      state.segs[d.sib].start = clamp(v, 0, state.segs[d.sib].end - MIN_SEG)
+    }
+  }
+
+  d.changed = Math.abs(seg.start - d.origStart) > 1e-4 || Math.abs(seg.end - d.origEnd) > 1e-4
+
+  // 吸附参考线：只在命中播放头时显示（其余边界本身就在眼前）
+  if (els.snapLine) {
+    const show = snapped !== null && Math.abs(snapped - state.playhead) < 1e-6
+    els.snapLine.hidden = !show
+    if (show) els.snapLine.style.left = tToPct(snapped) + '%'
+  }
+
+  renderTimeline()
+  renderSeq()
+  renderList()
+  renderStatus()
+}
+
+function endEdge () {
+  const d = state.edgeDrag
+  if (!d) return
+  state.edgeDrag = null
+  els.track.classList.remove('edge-dragging')
+  if (els.snapLine) els.snapLine.hidden = true
+  if (!d.changed) {
+    // 没真的拖动：撤掉这条空历史
+    if (hist.past.length === d.undoIndex) hist.past.pop()
+    updateHistoryUI()
+  }
+  renderAll()
 }
 
 function renderList () {
@@ -481,11 +764,11 @@ function renderList () {
     const drop = document.createElement('button')
     drop.className = 'drop'
     drop.textContent = '×'
-    drop.title = '删除这个切点，与相邻片段合并'
+    drop.title = '删除这个切点，与上一段合并'
     drop.disabled = i === 0
     drop.addEventListener('click', e => {
       e.stopPropagation()
-      removeCut(seg.start)
+      mergeWithPrev(i)
     })
 
     row.append(cb, idx, start, end, d, drop)
@@ -870,7 +1153,7 @@ async function loadVideo (file) {
     state.file = file
     state.info = info
     state.isAudio = !!info.isAudio
-    state.cuts = []
+    state.segs = [{ start: 0, end: Math.max(0, info.duration || 0) }]
     state.playhead = 0
     state.selected = new Set([0])
     state.outHeightManual = false
@@ -949,10 +1232,10 @@ function defaultProjectPath (file) {
 function collectProject () {
   return {
     app: 'xcVideoEdit',
-    version: 2,
+    version: 3,
     file: state.file,
     mediaName: state.file ? state.file.replace(/^.*[\\/]/, '') : '',
-    cuts: state.cuts.slice(),
+    segs: state.segs.map(s => ({ start: +s.start.toFixed(4), end: +s.end.toFixed(4) })),
     selected: [...state.selected].sort((a, b) => a - b),
     sel: { ...state.sel },
     preset: state.preset,
@@ -1007,10 +1290,29 @@ async function openProjectFile () {
 
 function applyProject (d) {
   const dur = duration()
-  state.cuts = (d.cuts || [])
-    .map(Number)
-    .filter(n => Number.isFinite(n) && n > 0.02 && n < dur - 0.02)
-    .sort((a, b) => a - b)
+
+  // 新工程直接存片段顺序；旧工程只有 cuts，按切点还原
+  let segs = []
+  if (Array.isArray(d.segs)) {
+    segs = d.segs
+      .map(s => ({ start: Number(s.start), end: Number(s.end) }))
+      .filter(s => Number.isFinite(s.start) && Number.isFinite(s.end) && s.end - s.start > 0.01)
+      .map(s => ({
+        start: clamp(s.start, 0, Math.max(0, dur - MIN_SEG)),
+        end: clamp(s.end, MIN_SEG, dur)
+      }))
+      .filter(s => s.end - s.start > 0.01)
+  }
+  if (!segs.length) {
+    const cuts = (d.cuts || [])
+      .map(Number)
+      .filter(n => Number.isFinite(n) && n > 0.02 && n < dur - 0.02)
+      .sort((a, b) => a - b)
+    const pts = [0, ...cuts, dur]
+    for (let i = 0; i < pts.length - 1; i++) segs.push({ start: pts[i], end: pts[i + 1] })
+  }
+  state.segs = segs
+  if (!state.segs.length) state.segs = [{ start: 0, end: dur }]
 
   const list = segments()
   const picked = new Set((d.selected || []).map(Number).filter(n => n >= 0 && n < list.length))
@@ -1242,24 +1544,130 @@ function cutAtPlayhead () {
     toast('切点离首尾太近，无法切割')
     return
   }
-  if (state.cuts.some(c => Math.abs(c - t) < 0.03)) {
-    toast('这个位置已经切过了')
+
+  const i = state.segs.findIndex(s => t > s.start + MIN_SEG && t < s.end - MIN_SEG)
+  if (i < 0) {
+    toast('这里已经是片段端点，不用再切')
     return
   }
 
   pushUndo()
-  state.cuts.push(t)
-  state.cuts.sort((a, b) => a - b)
-  reselectAll()
+  const seg = state.segs[i]
+  const before = state.segs.slice()
+  const beforeSel = new Set(state.selected)
+
+  // 切成两段，后一段紧跟在原位置（顺序不变）
+  state.segs.splice(i, 1, { start: seg.start, end: t }, { start: t, end: seg.end })
+
+  // 选择集合随索引平移
+  const wasSel = beforeSel.has(i)
+  const next = new Set()
+  for (const k of beforeSel) {
+    if (k < i) next.add(k)
+    else if (k === i) { if (wasSel) { next.add(i); next.add(i + 1) } }
+    else next.add(k + 1)
+  }
+  state.selected = next
+
   renderAll()
 }
 
-function removeCut (t) {
-  if (!t) return
+// 删除第 i 段的起点（与上一段合并）。两段在源素材上不再相邻时不允许合并
+function mergeWithPrev (i) {
+  if (i <= 0) return
+  const a = state.segs[i - 1]
+  const b = state.segs[i]
+  if (!a || !b) return
+  if (Math.abs(a.end - b.start) > 0.004) {
+    toast('这两段在源素材上不相邻（顺序被调整过），先在源时间轴上补回间隙再合并')
+    return
+  }
   pushUndo()
-  state.cuts = state.cuts.filter(c => Math.abs(c - t) > 0.05)
-  reselectAll()
+  const beforeSel = new Set(state.selected)
+  a.end = b.end
+  state.segs.splice(i, 1)
+
+  const next = new Set()
+  for (const k of beforeSel) {
+    if (k < i - 1) next.add(k)
+    else if (k === i - 1 || k === i) next.add(i - 1)
+    else next.add(k - 1)
+  }
+  state.selected = next
+
   renderAll()
+}
+
+// 拖动成片序列里的块：调整输出顺序（不碰源时间）
+function moveSegment (from, to) {
+  const len = state.segs.length
+  if (from < 0 || from >= len) return
+  if (to === from || to === from + 1) return
+  pushUndo()
+  const before = state.segs.slice()
+  const beforeSel = new Set(state.selected)
+  const [item] = state.segs.splice(from, 1)
+  const insert = to > from ? to - 1 : to
+  state.segs.splice(insert, 0, item)
+  remapSelection(before, beforeSel)
+  renderAll()
+  toast(`顺序已调整：第 ${from + 1} 段 → 第 ${insert + 1} 段`, true)
+}
+
+/* ---------------- 序列拖动（改顺序） ---------------- */
+
+function updateSeqDrag (e) {
+  const d = state.seqDrag
+  if (!d) return
+  const dx = e.clientX - d.startX
+  if (!d.moved && Math.abs(dx) < 5) return
+  if (!d.moved) {
+    d.moved = true
+    d.el.classList.add('moving')
+  }
+
+  // 以每个块的中点为界，决定插到哪
+  const blocks = [...els.seqTrack.querySelectorAll('.seq-clip')]
+  let insert = state.segs.length
+  let lineX = els.seqTrack.clientWidth
+  for (const el of blocks) {
+    const left = el.offsetLeft
+    if (e.clientX < left + el.offsetWidth / 2) {
+      insert = Number(el.dataset.i)
+      lineX = left
+      break
+    }
+    lineX = left + el.offsetWidth
+  }
+  d.insert = insert
+
+  let line = els.seqTrack.querySelector('.seq-insert')
+  if (!line) {
+    line = document.createElement('div')
+    line.className = 'seq-insert'
+    els.seqTrack.appendChild(line)
+  }
+  line.style.left = Math.max(0, Math.min(els.seqTrack.clientWidth, lineX)) + 'px'
+}
+
+function endSeqDrag () {
+  const d = state.seqDrag
+  if (!d) return
+  state.seqDrag = null
+  state.suppressSeqClick = d.moved
+  if (d.moved) {
+    // 块被重建后 click 可能落空，过一会儿自动清掉，避免吞掉下一次点击
+    setTimeout(() => { state.suppressSeqClick = false }, 250)
+  }
+  const line = els.seqTrack.querySelector('.seq-insert')
+  if (line) line.remove()
+  if (!d.moved) return
+  const insert = d.insert
+  if (insert !== null && insert !== d.from && insert !== d.from + 1) {
+    moveSegment(d.from, insert)
+  } else {
+    renderSeq()
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1503,6 +1911,10 @@ document.addEventListener('pointerup', endDrag)
 document.addEventListener('pointercancel', endDrag)
 
 els.video.addEventListener('loadedmetadata', () => {
+  // 素材时长晚到时补齐唯一片段的终点
+  if (state.segs.length === 1 && state.segs[0].start === 0 && state.segs[0].end < 0.1) {
+    state.segs[0].end = duration()
+  }
   layoutFrame()
   renderAll()
 })
@@ -1517,18 +1929,18 @@ els.video.addEventListener('play', () => { els.btnPlay.textContent = '❚❚' })
 els.video.addEventListener('pause', () => { els.btnPlay.textContent = '▶' })
 els.video.addEventListener('click', togglePlay)
 
-// 时间轴缩放与平移：Alt+滚轮左右移，Shift/Ctrl+滚轮以光标为锚点缩放
+// 时间轴缩放与平移：Shift/Ctrl+滚轮以光标为锚点缩放，Alt+滚轮或直接滚轮左右移
 els.timeline.addEventListener('wheel', e => {
   if (!state.info) return
   e.preventDefault()
   const rect = els.track.getBoundingClientRect()
-  if (e.altKey) {
+  if (e.shiftKey || e.ctrlKey || e.metaKey) {
+    const pct = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
+    zoomAt(pct, e.deltaY > 0 ? 1.25 : 0.8)
+  } else {
     const span = viewSpan()
     const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
     setView(viewStart() + delta * span / 900, span)
-  } else if (e.shiftKey || e.ctrlKey || e.metaKey) {
-    const pct = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
-    zoomAt(pct, e.deltaY > 0 ? 1.25 : 0.8)
   }
 }, { passive: false })
 
@@ -1545,11 +1957,15 @@ els.timeline.addEventListener('pointerdown', e => {
 })
 
 document.addEventListener('pointermove', e => {
+  if (state.edgeDrag) { updateEdge(e); return }
+  if (state.seqDrag) { updateSeqDrag(e); return }
   if (!state.dragging) return
   seekFromEvent(e)
 })
 
 document.addEventListener('pointerup', () => {
+  if (state.edgeDrag) endEdge()
+  if (state.seqDrag) endSeqDrag()
   if (state.dragging) {
     state.dragging = false
     state.playhead = els.video.currentTime
@@ -1607,6 +2023,9 @@ window.addEventListener('keydown', e => {
   } else if (e.key === 'Home') {
     e.preventDefault()
     setView(0, duration())
+  } else if (e.key === 'f' || e.key === 'F') {
+    e.preventDefault()
+    zoomToSelection()
   } else if (e.key === 'ArrowLeft') {
     e.preventDefault()
     stepFrame(e.shiftKey ? -10 : -1)

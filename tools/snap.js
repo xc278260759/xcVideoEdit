@@ -89,6 +89,9 @@ const historyTest = process.argv.includes('--historytest')
 const thumbTest = process.argv.includes('--thumbtest')
 const projTest = process.argv.includes('--projtest')
 const zoomTest = process.argv.includes('--zoomtest')
+const seqTest = process.argv.includes('--seqtest')
+const seqExportArg = process.argv.find(a => a.startsWith('--seqexport='))
+const seqExport = seqExportArg ? seqExportArg.slice(12) : null
 const keepZoom = process.argv.includes('--keepzoom')
 
 app.whenReady().then(() => {
@@ -322,14 +325,14 @@ app.whenReady().then(() => {
             await sleep(500)
             btn.click()
             await sleep(300)
-            const before = state.cuts.length
+            const before = state.segs.length
             undo()
             await sleep(200)
-            const afterUndo = state.cuts.length
+            const afterUndo = state.segs.length
             const undoDisabled = document.getElementById('btnUndo').disabled
             redo()
             await sleep(200)
-            const afterRedo = state.cuts.length
+            const afterRedo = state.segs.length
             const redoDisabled = document.getElementById('btnRedo').disabled
             return JSON.stringify({ before, afterUndo, afterRedo, undoDisabled, redoDisabled })
           })()
@@ -361,13 +364,59 @@ app.whenReady().then(() => {
         console.log('THUMBTEST', res)
       }
 
+      if (seqTest) {
+        const res = await win.webContents.executeJavaScript(`
+          (async () => {
+            const sleep = ms => new Promise(r => setTimeout(r, ms))
+            const snap = () => state.segs.map(s => [+s.start.toFixed(2), +s.end.toFixed(2)])
+            const before = snap()
+            moveSegment(2, 0)
+            await sleep(150)
+            const reordered = snap()
+            const blocks = [...document.querySelectorAll('.seq-clip')].map(el => ({
+              no: el.querySelector('.seq-no').textContent,
+              left: Math.round(el.offsetLeft),
+              w: Math.round(el.offsetWidth),
+              on: el.classList.contains('on')
+            }))
+            const first = document.querySelectorAll('.seq-clip')[1]
+            const edge = first.querySelector('.seq-edge.r')
+            const r = edge.getBoundingClientRect()
+            const cx = r.left + 4
+            edge.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: r.top + 10, pointerId: 1, button: 0 }))
+            document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: cx + 60, clientY: r.top + 10, pointerId: 1 }))
+            await sleep(80)
+            const dragging = snap()
+            const snapLineVisible = !document.getElementById('snapLine').hidden
+            document.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, clientX: cx + 60, clientY: r.top + 10, pointerId: 1 }))
+            await sleep(120)
+            const afterEdge = snap()
+            undo(); await sleep(120)
+            const undone = snap()
+            redo(); await sleep(120)
+            const redone = snap()
+            return JSON.stringify({
+              before, reordered, blocks, dragging, snapLineVisible,
+              afterEdge, undone, redone,
+              seqInfo: document.getElementById('seqInfo').textContent,
+              undoDisabled: document.getElementById('btnUndo').disabled
+            })
+          })()
+        `)
+        console.log('SEQT', res)
+        await new Promise(r => setTimeout(r, 300))
+      }
+
       if (projTest) {
         const projPath = path.join(__dirname, 'test_project.xcproj')
         const beforeRaw = await win.webContents.executeJavaScript(`
           (async () => {
+            const sleep = ms => new Promise(r => setTimeout(r, ms))
+            moveSegment(2, 0)
+            await sleep(120)
             const p = collectProject()
             await window.xc.writeProject(${JSON.stringify(projPath)}, p)
-            state.cuts = []
+            state.segs = [{ start: 0, end: video.duration || 0 }]
             state.selected = new Set([0])
             state.sel = { x: 0, y: 0, w: 1, h: 1 }
             state.outHeightManual = false
@@ -381,7 +430,7 @@ app.whenReady().then(() => {
           (() => {
             applyProject(${JSON.stringify(data)})
             return JSON.stringify({
-              cuts: state.cuts.length,
+              segs: state.segs.map(s => [+s.start.toFixed(2), +s.end.toFixed(2)]),
               selected: state.selected.size,
               sel: state.sel,
               preset: state.preset,
@@ -445,6 +494,24 @@ app.whenReady().then(() => {
         `)
         console.log('ZOOMTEST', res)
         await new Promise(r => setTimeout(r, 300))
+      }
+
+      if (seqExport && video) {
+        const res = await win.webContents.executeJavaScript(`
+          (async () => {
+            const picked = segments().filter(s => s.selected)
+            const r = await window.xc.exportSegments({
+              input: ${JSON.stringify(video)},
+              output: ${JSON.stringify(seqExport)},
+              mode: 'precise',
+              vf: null,
+              audio: false,
+              segments: picked.map(s => ({ start: s.start, end: s.end }))
+            })
+            return JSON.stringify({ segs: picked.map(s => [s.start, s.end]), result: r })
+          })()
+        `)
+        console.log('SEQEXPORT', res)
       }
 
       if (exportOut && segs) {
