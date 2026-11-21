@@ -1,0 +1,16 @@
+node_modules/
+dist/
+out/
+*.lnk
+
+# 开发自测产物
+tools/*.mp4
+tools/*.png
+build/icon-source.png
+build/preview_sizes.png
+
+# 临时文件
+.xcVideoEdit_tmp_*/
+*.log
+Thumbs.db
+.DS_Store

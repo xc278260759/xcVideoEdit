@@ -1,0 +1,34 @@
+/* 合并页补充样式：取景框 + 时间轴同屏 */
+
+.preview {
+  background:
+    radial-gradient(circle at 50% 45%, #171c21 0%, #0b0e11 70%);
+  padding: 0;
+}
+
+.preview .frame {
+  flex: none;
+}
+
+.preview .frame video {
+  max-width: none;
+  max-height: none;
+}
+
+.preview .crop {
+  z-index: 3;
+}
+
+/* 顶栏控件多，窄窗口时允许提示语省略 */
+@media (max-width: 1180px) {
+  .mode-hint { display: none; }
+}
+
+/* 顶栏控件不换行 */
+.topbar { gap: 8px; flex-wrap: nowrap; overflow: hidden; }
+.topbar .btn { white-space: nowrap; flex: 0 0 auto; }
+.brand { flex: 0 0 auto; white-space: nowrap; }
+.field { flex: 0 0 auto; }
+.mode-hint { display: none; }
+.out-size { min-width: 148px; color: var(--text); }
+

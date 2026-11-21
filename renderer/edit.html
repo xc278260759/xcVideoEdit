@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' xcfile:; media-src 'self' xcfile:; img-src 'self' xcfile: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>xcVideoEdit · 剪辑</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="edit.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <span>xcVideoEdit</span>
+        <em>单轨剪辑</em>
+      </div>
+
+      <nav class="tabs">
+        <span class="tab active">片段剪辑</span>
+        <button class="tab" id="tabCrop" type="button">画面尺寸</button>
+      </nav>
+
+      <button id="btnOpen" class="btn">打开视频</button>
+
+      <div class="sep"></div>
+
+      <label class="field">
+        <span>导出模式</span>
+        <select id="mode">
+          <option value="lossless" selected>无损快速</option>
+          <option value="precise">精确重编码</option>
+        </select>
+      </label>
+
+      <span id="modeHint" class="mode-hint">切点对齐关键帧，秒出片</span>
+
+      <div class="spacer"></div>
+
+      <button id="btnCutTop" class="btn" disabled>在播放头切割 <kbd>C</kbd></button>
+      <button id="btnExport" class="btn primary" disabled>导出片段</button>
+    </header>
+
+    <main class="editor-main">
+      <section class="preview" id="preview">
+        <div class="empty" id="empty">
+          <div class="empty-card">
+            <div class="empty-icon">✂</div>
+            <h1>打开视频，开始粗剪</h1>
+            <p>播放到要切的位置按 <kbd>C</kbd>，或在时间轴上点击后切割。切出来的每一段会进下面的片段列表，可单独勾选导出。</p>
+            <ul>
+              <li>空格 播放 / 暂停</li>
+              <li>← / → 逐帧（Shift 加速）</li>
+              <li>C 在播放头处切割</li>
+            </ul>
+          </div>
+        </div>
+        <video id="video" preload="auto" playsinline></video>
+      </section>
+
+      <div class="transport">
+        <button id="btnPlay" class="btn icon" title="播放 / 暂停（空格）" disabled>▶</button>
+        <button id="btnPrev" class="btn icon" title="上一帧" disabled>◀</button>
+        <button id="btnNext" class="btn icon" title="下一帧" disabled>▶</button>
+        <span class="time-read"><b id="timeNow">00:00.00</b> / <span id="timeDur">00:00.00</span></span>
+        <span class="keys-hint">空格 播放 · ←/→ 逐帧 · C 切割</span>
+        <div class="spacer"></div>
+        <span id="playheadInfo" class="playhead-info"></span>
+      </div>
+
+      <div class="timeline-wrap">
+        <div class="timeline" id="timeline">
+          <div class="ruler" id="ruler"></div>
+          <div class="track" id="track"></div>
+          <div class="playhead" id="playhead" hidden></div>
+        </div>
+      </div>
+
+      <section class="clip-panel">
+        <div class="clip-head">
+          <span class="clip-title">片段列表</span>
+          <span id="clipSummary" class="clip-summary"></span>
+          <div class="spacer"></div>
+          <button id="btnSelectAll" class="btn tiny" disabled>全选</button>
+          <button id="btnSelectNone" class="btn tiny" disabled>全不选</button>
+        </div>
+        <div class="clip-list" id="clipList">
+          <div class="clip-placeholder">还没有片段</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="statusbar">
+      <span id="srcInfo">未加载视频</span>
+      <span class="vsep"></span>
+      <span id="segmentInfo">片段 —</span>
+      <span class="vsep"></span>
+      <span id="selectedInfo">已选 —</span>
+      <div class="spacer"></div>
+      <span id="modeInfo">无损模式</span>
+    </footer>
+
+    <div class="progress" id="progress" hidden>
+      <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+      <span id="progressText">0%</span>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="edit.js"></script>
+</body>
+</html>

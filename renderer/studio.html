@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' xcfile:; media-src 'self' xcfile:; img-src 'self' xcfile: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>xcVideoEdit · 剪辑 + 取景</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="edit.css">
+  <link rel="stylesheet" href="studio.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <span>xcVideoEdit</span>
+      </div>
+
+      <button id="btnOpen" class="btn">打开视频</button>
+
+      <div class="sep"></div>
+
+      <label class="field">
+        <span>画面比例</span>
+        <select id="ratio">
+          <option value="source" selected>原片比例</option>
+          <option value="free">自由裁剪</option>
+          <option value="16:9">16:9 横屏</option>
+          <option value="9:16">9:16 竖屏</option>
+          <option value="1:1">1:1 方形</option>
+          <option value="4:3">4:3</option>
+          <option value="3:4">3:4 竖版</option>
+          <option value="2.35:1">2.35:1 宽银幕</option>
+          <option value="2:1">2:1</option>
+          <option value="21:9">21:9</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>缩放</span>
+        <select id="scalePct" title="以裁剪后的尺寸为基准按百分比缩放">
+          <option value="100" selected>100%</option>
+          <option value="75">75%</option>
+          <option value="50">50%</option>
+          <option value="33">33%</option>
+          <option value="25">25%</option>
+          <option value="custom">自定义</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>高度</span>
+        <input id="outHeight" type="number" min="2" step="2" value="1080" disabled>
+      </label>
+
+      <span id="outSize" class="out-size">最终 —</span>
+
+      <div class="sep"></div>
+
+      <label class="field">
+        <span>导出模式</span>
+        <select id="mode">
+          <option value="lossless" selected>无损快速</option>
+          <option value="precise">精确重编码</option>
+        </select>
+      </label>
+
+      <span id="modeHint" class="mode-hint">切点对齐关键帧，秒出片</span>
+
+      <div class="spacer"></div>
+
+      <button id="btnCutTop" class="btn" disabled>切割 <kbd>C</kbd></button>
+      <button id="btnExport" class="btn primary" disabled>导出成片</button>
+    </header>
+
+    <main class="editor-main">
+      <section class="preview" id="preview">
+        <div class="empty" id="empty">
+          <div class="empty-card">
+            <div class="empty-icon">◎</div>
+            <h1>打开视频，一边取景一边粗剪</h1>
+            <p>拖动红框改画面比例，下方按 <kbd>C</kbd> 切片段，勾选要的段落一次导出。</p>
+            <ul>
+              <li>红框：成片取景范围，8 个手柄可拉伸</li>
+              <li>黑框：原始画面边界，框外暗区会被裁掉</li>
+              <li>时间轴：点击定位，红线是播放头</li>
+            </ul>
+          </div>
+        </div>
+
+        <div class="frame" id="frame" hidden>
+          <video id="video" preload="auto" playsinline></video>
+          <div class="crop" id="crop" tabindex="0">
+            <div class="thirds"></div>
+            <div class="crop-label" id="cropLabel"></div>
+            <i class="handle nw" data-dir="nw"></i>
+            <i class="handle n"  data-dir="n"></i>
+            <i class="handle ne" data-dir="ne"></i>
+            <i class="handle w"  data-dir="w"></i>
+            <i class="handle e"  data-dir="e"></i>
+            <i class="handle sw" data-dir="sw"></i>
+            <i class="handle s"  data-dir="s"></i>
+            <i class="handle se" data-dir="se"></i>
+          </div>
+        </div>
+      </section>
+
+      <div class="transport">
+        <button id="btnPlay" class="btn icon" title="播放 / 暂停（空格）" disabled>▶</button>
+        <button id="btnPrev" class="btn icon" title="上一帧（←）" disabled>◀</button>
+        <button id="btnNext" class="btn icon" title="下一帧（→）" disabled>▶</button>
+        <span class="time-read"><b id="timeNow">00:00.00</b> / <span id="timeDur">00:00.00</span></span>
+        <span class="keys-hint">空格播放 · ←/→ 逐帧 · C 切割 · 拖红框取景</span>
+        <div class="spacer"></div>
+        <span class="playhead-info" id="playheadInfo">00:00.00</span>
+      </div>
+
+      <div class="timeline-wrap">
+        <div class="timeline" id="timeline">
+          <div class="ruler" id="ruler"></div>
+          <div class="track" id="track"></div>
+          <div class="playhead" id="playhead" hidden></div>
+        </div>
+      </div>
+
+      <section class="clip-panel">
+        <div class="clip-head">
+          <span class="clip-title">片段列表</span>
+          <span class="clip-summary" id="clipSummary"></span>
+          <div class="spacer"></div>
+          <button id="btnSelectAll" class="btn tiny" disabled>全选</button>
+          <button id="btnSelectNone" class="btn tiny" disabled>全不选</button>
+        </div>
+        <div class="clip-list" id="clipList">
+          <div class="clip-placeholder">还没有片段</div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="statusbar">
+      <span id="srcInfo">未加载视频</span>
+      <span class="vsep"></span>
+      <span id="cropInfo">裁剪 —</span>
+      <span class="vsep"></span>
+      <span id="outInfo">输出 —</span>
+      <span class="vsep"></span>
+      <span id="segmentInfo">片段 0 段</span>
+      <span class="vsep"></span>
+      <span id="selectedInfo">已选 0 段</span>
+      <div class="spacer"></div>
+      <span id="modeInfo">无损快速模式</span>
+    </footer>
+
+    <div class="progress" id="progress" hidden>
+      <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+      <span id="progressText">0%</span>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="studio.js"></script>
+</body>
+</html>

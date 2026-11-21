@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' xcfile:; media-src 'self' xcfile:; img-src 'self' xcfile: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <title>xcVideoEdit</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <span class="dot"></span>
+        <span>xcVideoEdit</span>
+        <em>画面比例裁剪</em>
+      </div>
+
+      <nav class="tabs">
+        <button class="tab" id="tabEdit" type="button">片段剪辑</button>
+        <span class="tab active">画面尺寸</span>
+      </nav>
+
+      <button id="btnOpen" class="btn">打开视频</button>
+
+      <div class="sep"></div>
+
+      <label class="field">
+        <span>画面比例</span>
+        <select id="ratio">
+          <option value="free" selected>自由裁剪</option>
+          <option value="source">原片比例</option>
+          <option value="16:9">16:9 横屏</option>
+          <option value="9:16">9:16 竖屏</option>
+          <option value="1:1">1:1 方形</option>
+          <option value="4:3">4:3</option>
+          <option value="3:4">3:4 竖版</option>
+          <option value="2.35:1">2.35:1 宽银幕</option>
+          <option value="2:1">2:1</option>
+          <option value="21:9">21:9</option>
+        </select>
+      </label>
+
+      <label class="field">
+        <span>输出高度</span>
+        <input id="outHeight" type="number" min="2" step="2" value="1080" disabled>
+      </label>
+
+      <span id="outSize" class="out-size">—</span>
+
+      <div class="spacer"></div>
+
+      <button id="btnPlay" class="btn icon" title="播放 / 暂停（空格）" disabled>▶</button>
+      <button id="btnExport" class="btn primary" disabled>导出视频</button>
+    </header>
+
+    <main class="stage" id="stage">
+      <div class="empty" id="empty">
+        <div class="empty-card">
+          <div class="empty-icon">⬚</div>
+          <h1>把视频拖进来</h1>
+          <p>或点击左上角「打开视频」。加载后拖动红框即可改变成片比例。</p>
+          <ul>
+            <li>红框：裁剪范围，8 个手柄可拉伸</li>
+            <li>黑框：原始画面边界</li>
+            <li>框外暗区：会被裁掉的画面</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="frame" id="frame" hidden>
+        <video id="video" preload="auto" playsinline></video>
+        <div class="crop" id="crop" tabindex="0">
+          <div class="thirds"></div>
+          <div class="crop-label" id="cropLabel"></div>
+          <i class="handle nw" data-dir="nw"></i>
+          <i class="handle n"  data-dir="n"></i>
+          <i class="handle ne" data-dir="ne"></i>
+          <i class="handle w"  data-dir="w"></i>
+          <i class="handle e"  data-dir="e"></i>
+          <i class="handle sw" data-dir="sw"></i>
+          <i class="handle s"  data-dir="s"></i>
+          <i class="handle se" data-dir="se"></i>
+        </div>
+      </div>
+    </main>
+
+    <footer class="statusbar">
+      <span id="srcInfo">未加载视频</span>
+      <span class="vsep"></span>
+      <span id="cropInfo">裁剪 —</span>
+      <span class="vsep"></span>
+      <span id="outInfo">输出 —</span>
+      <div class="spacer"></div>
+      <span id="timeInfo">00:00 / 00:00</span>
+    </footer>
+
+    <div class="progress" id="progress" hidden>
+      <div class="progress-track"><div class="progress-bar" id="progressBar"></div></div>
+      <span id="progressText">0%</span>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" hidden></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
