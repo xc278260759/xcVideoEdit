@@ -6,6 +6,7 @@ const fs = require('node:fs')
 const { Readable } = require('node:stream')
 const { spawn } = require('node:child_process')
 const { exportSegments } = require('./lib/exporter')
+const { safePathFromUrl } = require('./lib/localpath')
 
 const FFMPEG = process.env.XC_FFMPEG || 'F:\\Tools\\ffmpeg\\bin\\ffmpeg.exe'
 const FFPROBE = process.env.XC_FFPROBE || 'F:\\Tools\\ffmpeg\\bin\\ffprobe.exe'
@@ -31,16 +32,13 @@ function mimeOf (p) {
   return MIME[path.extname(p).toLowerCase()] || 'application/octet-stream'
 }
 
-function safePathFromUrl (rawUrl) {
-  let p = decodeURIComponent(new URL(rawUrl).pathname)
-  if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1)
-  return path.normalize(p.replace(/\//g, '\\'))
-}
-
 // 本地视频通过自定义协议提供给渲染进程，并实现 Range 以支持拖动进度
 function registerVideoProtocol () {
   protocol.handle('xcfile', async (request) => {
     const filePath = safePathFromUrl(request.url)
+    if (process.env.XC_DEBUG) {
+      console.log('[xcfile]', JSON.stringify(request.url), '=>', JSON.stringify(filePath), 'exists=', fs.existsSync(filePath))
+    }
     let stat
     try {
       stat = await fs.promises.stat(filePath)

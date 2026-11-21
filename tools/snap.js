@@ -7,6 +7,7 @@ const fs = require('node:fs')
 const { Readable } = require('node:stream')
 const { spawn } = require('node:child_process')
 const { exportSegments } = require('../lib/exporter')
+const { safePathFromUrl } = require('../lib/localpath')
 const { pathToFileURL } = require('node:url')
 
 const FFPROBE = 'F:\\Tools\\ffmpeg\\bin\\ffprobe.exe'
@@ -71,9 +72,10 @@ const scalePct = scaleArg ? scaleArg.slice(8) : null
 
 app.whenReady().then(() => {
   protocol.handle('xcfile', async req => {
-    let p = decodeURIComponent(new URL(req.url).pathname)
-    if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1)
-    p = path.normalize(p.replace(/\//g, '\\'))
+    const p = safePathFromUrl(req.url)
+    if (process.env.XC_DEBUG) {
+      console.log('[xcfile]', JSON.stringify(req.url), '=>', JSON.stringify(p), 'exists=', fs.existsSync(p))
+    }
 
     let stat
     try { stat = await fs.promises.stat(p) } catch { return new Response('not found', { status: 404 }) }
