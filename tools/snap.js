@@ -88,6 +88,7 @@ const audioTest = process.argv.includes('--audiotest')
 const historyTest = process.argv.includes('--historytest')
 const thumbTest = process.argv.includes('--thumbtest')
 const projTest = process.argv.includes('--projtest')
+const zoomTest = process.argv.includes('--zoomtest')
 
 app.whenReady().then(() => {
   protocol.handle('xcfile', async req => {
@@ -393,6 +394,42 @@ app.whenReady().then(() => {
           saved: JSON.parse(beforeRaw),
           restored: JSON.parse(afterRaw)
         }))
+        await new Promise(r => setTimeout(r, 300))
+      }
+
+      if (zoomTest) {
+        const res = await win.webContents.executeJavaScript(`
+          (async () => {
+            const sleep = ms => new Promise(r => setTimeout(r, ms))
+            const tl = document.getElementById('timeline')
+            const track = document.getElementById('track')
+            const rect = track.getBoundingClientRect()
+            const fire = (deltaY, mods) => tl.dispatchEvent(new WheelEvent('wheel', {
+              deltaY,
+              bubbles: true,
+              cancelable: true,
+              clientX: rect.left + rect.width * 0.5,
+              ...mods
+            }))
+            const state0 = { span: +viewSpan().toFixed(3), start: +viewStart().toFixed(3) }
+            fire(-100, { shiftKey: true })
+            await sleep(60)
+            const z1 = { span: +viewSpan().toFixed(3), start: +viewStart().toFixed(3) }
+            fire(-100, { shiftKey: true })
+            await sleep(60)
+            const z2 = { span: +viewSpan().toFixed(3), start: +viewStart().toFixed(3) }
+            fire(120, { altKey: true })
+            await sleep(60)
+            const p1 = { span: +viewSpan().toFixed(3), start: +viewStart().toFixed(3) }
+            const infoText = document.getElementById('viewInfo').textContent
+            const ticks = document.querySelectorAll('#ruler .tick').length
+            const labels = [...document.querySelectorAll('#ruler .tick-label')].map(e => e.textContent)
+            const thumbs = document.querySelectorAll('#thumbs .thumb').length
+            const clips = [...document.querySelectorAll('.clip')].map(c => ({ left: c.style.left, width: c.style.width }))
+            return JSON.stringify({ state0, z1, z2, p1, infoText, ticks, labels, thumbs, clips })
+          })()
+        `)
+        console.log('ZOOMTEST', res)
         await new Promise(r => setTimeout(r, 300))
       }
 

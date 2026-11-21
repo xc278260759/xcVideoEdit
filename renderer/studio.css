@@ -184,3 +184,23 @@ body.audio-mode .track { top: 22px; }
 @media (max-width: 1300px) {
   .out-size { display: none; }
 }
+
+/* 视窗信息 + 缩略图绝对定位 */
+.view-info {
+  color: var(--muted);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+  padding-right: 10px;
+  white-space: nowrap;
+}
+
+.thumbs .thumb {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  object-fit: cover;
+  border-right: 1px solid rgba(0, 0, 0, 0.45);
+}
+
+.clip.head-cut .clip-no,
+.clip.head-cut .clip-dur { display: none; }

@@ -40,6 +40,7 @@ const els = {
   ruler: $('ruler'),
   track: $('track'),
   playhead: $('playhead'),
+  viewInfo: $('viewInfo'),
   timeNow: $('timeNow'),
   timeDur: $('timeDur'),
   playheadInfo: $('playheadInfo'),
@@ -78,6 +79,7 @@ const state = {
   outHeight: 1080,
   outHeightManual: false,
   outHeightDirty: false,
+  view: { start: 0, span: 0 },
   drag: null
 }
 
@@ -128,6 +130,7 @@ function fmtRuler (sec) {
   const s = Math.floor(sec) % 60
   if (h) return h + ':' + String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0')
   if (m) return m + ':' + String(s).padStart(2, '0')
+  if (Math.abs(sec - Math.round(sec)) > 0.001) return sec.toFixed(1) + 's'
   return s + 's'
 }
 
@@ -143,6 +146,75 @@ function duration () {
   const v = els.video.duration
   if (Number.isFinite(v) && v > 0) return v
   return (state.info && state.info.duration) || 0
+}
+
+/* ------------------------------------------------------------------ */
+/* 时间轴视窗：缩放与平移                                              */
+/* ------------------------------------------------------------------ */
+
+function viewSpan () {
+  const dur = duration()
+  const span = state.view.span
+  return span > 0 ? Math.min(span, dur) : dur
+}
+
+function viewStart () {
+  const dur = duration()
+  return clamp(state.view.start || 0, 0, Math.max(0, dur - viewSpan()))
+}
+
+function tToPct (t) {
+  const span = viewSpan()
+  if (!span) return 0
+  return (t - viewStart()) / span * 100
+}
+
+function pctToT (p) {
+  return viewStart() + p * viewSpan()
+}
+
+function minViewSpan () {
+  return Math.max(0.35, duration() / 1500)
+}
+
+function setView (start, span) {
+  const dur = duration()
+  if (!dur) return
+  span = clamp(span, Math.min(minViewSpan(), dur), dur)
+  start = clamp(start, 0, Math.max(0, dur - span))
+  state.view = { start, span }
+  if (els.viewInfo) {
+    els.viewInfo.textContent = span >= dur - 0.001
+      ? '全片'
+      : `${fmtTime(start)} – ${fmtTime(start + span)}`
+    els.viewInfo.title = '当前视图范围：Shift+滚轮缩放，Alt+滚轮平移，双击时间轴回到全片'
+  }
+  refreshTimelineViews()
+}
+
+function refreshTimelineViews () {
+  renderRuler()
+  renderTimeline()
+  renderThumbs()
+  updatePlayhead()
+  drawWaveform()
+}
+
+function zoomAt (pct, factor) {
+  const span = viewSpan()
+  const dur = duration()
+  const anchor = viewStart() + pct * span
+  const next = clamp(span * factor, Math.min(minViewSpan(), dur), dur)
+  setView(anchor - pct * next, next)
+}
+
+function followPlayhead (t) {
+  const span = viewSpan()
+  const dur = duration()
+  if (span >= dur - 0.001) return
+  const rel = (t - state.view.start) / span
+  if (rel > 0.94) setView(t - span * 0.7, span)
+  else if (rel < 0.02) setView(t - span * 0.1, span)
 }
 
 /* ------------------------------------------------------------------ */
@@ -278,7 +350,7 @@ function renderAll () {
 }
 
 function chooseStep (dur) {
-  const steps = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800]
+  const steps = [0.1, 0.2, 0.5, 1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 1200, 1800]
   for (const s of steps) {
     if (dur / s <= 14) return s
   }
@@ -290,17 +362,24 @@ function renderRuler () {
   els.ruler.innerHTML = ''
   if (!dur) return
 
-  const step = chooseStep(dur)
-  for (let t = 0; t <= dur + 0.0001; t += step) {
+  const span = viewSpan()
+  const start = viewStart()
+  const step = chooseStep(span)
+  const first = Math.floor(start / step) * step
+
+  for (let t = first; t <= start + span + 0.0001; t += step) {
+    if (t < start - 0.0001) continue
+
     const tick = document.createElement('div')
     tick.className = 'tick' + (t % (step * 2) === 0 ? ' major' : '')
-    tick.style.left = (t / dur * 100) + '%'
+    tick.style.left = tToPct(t) + '%'
     els.ruler.appendChild(tick)
 
-    if (t / dur < 0.985) {
+    const pct = tToPct(t)
+    if (pct >= 0 && pct < 97) {
       const label = document.createElement('div')
       label.className = 'tick-label'
-      label.style.left = (t / dur * 100) + '%'
+      label.style.left = pct + '%'
       label.textContent = fmtRuler(t)
       els.ruler.appendChild(label)
     }
@@ -309,14 +388,16 @@ function renderRuler () {
 
 function renderTimeline () {
   const dur = duration()
+  const span = viewSpan()
   els.track.innerHTML = ''
-  if (!dur) return
+  if (!dur || !span) return
 
   segments().forEach((seg, i) => {
     const el = document.createElement('div')
     el.className = 'clip' + (i % 2 ? ' alt' : '') + (seg.selected ? ' on' : ' no')
-    el.style.left = (seg.start / dur * 100) + '%'
-    el.style.width = ((seg.end - seg.start) / dur * 100) + '%'
+    el.style.left = tToPct(seg.start) + '%'
+    el.style.width = ((seg.end - seg.start) / span * 100) + '%'
+    if (seg.start < viewStart() - 0.001) el.classList.add('head-cut')
     el.title = `片段 ${i + 1}  ${fmtTime(seg.start)} → ${fmtTime(seg.end)}`
 
     const no = document.createElement('span')
@@ -441,15 +522,19 @@ function renderStatus () {
 
 function updatePlayhead () {
   const dur = duration()
-  if (!dur) {
+  const span = viewSpan()
+  if (!dur || !span) {
     els.playhead.hidden = true
     return
   }
-  els.playhead.hidden = false
-  els.playhead.style.left = clamp(state.playhead / dur * 100, 0, 100) + '%'
+  const pct = (state.playhead - viewStart()) / span * 100
+  const visible = pct >= -0.01 && pct <= 100.01
+  els.playhead.hidden = !visible
+  els.playhead.style.left = clamp(pct, 0, 100) + '%'
   els.playheadInfo.textContent = fmtTime(state.playhead)
   if (state.isAudio && els.audioCursor) {
-    els.audioCursor.style.left = clamp(state.playhead / dur * 100, 0, 100) + '%'
+    els.audioCursor.hidden = !visible
+    els.audioCursor.style.left = clamp(pct, 0, 100) + '%'
   }
 }
 
@@ -473,7 +558,7 @@ function seekFromEvent (e) {
   const rect = els.track.getBoundingClientRect()
   if (!rect.width) return
   const x = clamp((e.clientX - rect.left) / rect.width, 0, 1)
-  seekTo(x * duration())
+  seekTo(pctToT(x))
 }
 
 /* ------------------------------------------------------------------ */
@@ -830,6 +915,7 @@ async function loadVideo (file) {
 
     els.ratio.value = state.preset
     updateModeHint()
+    state.view = { start: 0, span: info.duration || 0 }
     layoutFrame()
     if (!state.isAudio) fitPreset(state.preset)
     renderAll()
@@ -965,32 +1051,48 @@ let thumbToken = 0
 
 async function buildThumbs (file) {
   const token = ++thumbToken
+  state.thumbData = null
   els.thumbs.innerHTML = ''
   if (state.isAudio || !file) return
   try {
     const res = await window.xc.getThumbs(file)
     if (token !== thumbToken) return
-    renderThumbs(res)
+    state.thumbData = res
+    renderThumbs()
   } catch {
     if (token !== thumbToken) return
     els.thumbs.innerHTML = '<span class="thumbs-fail">缩略图不可用</span>'
   }
 }
 
-function renderThumbs (res) {
+function renderThumbs () {
   els.thumbs.innerHTML = ''
-  if (!res || !res.files || !res.files.length) return
-  const n = res.files.length
-  res.files.forEach((name, i) => {
+  const data = state.thumbData
+  if (!data || !data.files || !data.files.length) return
+
+  const dur = duration()
+  const span = viewSpan()
+  const start = viewStart()
+  if (!dur || !span) return
+
+  const n = data.files.length
+  data.files.forEach((name, i) => {
+    const t0 = i * dur / n
+    const t1 = (i + 1) * dur / n
+    const a = Math.max(t0, start)
+    const b = Math.min(t1, start + span)
+    if (b <= a) return
+
     const img = document.createElement('img')
     img.className = 'thumb'
-    img.loading = 'lazy'
     img.draggable = false
-    img.src = toXcUrl(res.dir + '\\' + name)
-    img.title = `第 ${i + 1} / ${n} 帧`
+    img.src = toXcUrl(data.dir + '\\' + name)
+    img.style.left = ((a - start) / span * 100) + '%'
+    img.style.width = ((b - a) / span * 100) + '%'
+    img.title = `跳到 ${fmtTime((t0 + t1) / 2)}`
     img.addEventListener('click', e => {
       e.stopPropagation()
-      seekTo((i + 0.5) * duration() / n)
+      seekTo((t0 + t1) / 2)
     })
     els.thumbs.appendChild(img)
   })
@@ -1025,7 +1127,7 @@ async function buildWaveform (file, info) {
     if (token !== waveToken) return
 
     const data = audio.getChannelData(0)
-    const N = 2000
+    const N = 4000
     const block = Math.max(1, Math.floor(data.length / N))
     const peaks = new Float32Array(N)
     for (let i = 0; i < N; i++) {
@@ -1082,15 +1184,31 @@ function drawWaveform () {
   ctx.lineTo(w, h / 2)
   ctx.stroke()
 
-  const barW = w / waveData.length
+  const dur = duration()
+  const span = viewSpan()
+  const start = viewStart()
+  if (!dur || !span) return
+
+  const px = Math.max(1, Math.floor(w))
+  const N = waveData.length
+  const i0 = Math.max(0, Math.floor((start / dur) * N))
+  const i1 = Math.min(N, Math.ceil(((start + span) / dur) * N))
+  const count = Math.max(1, i1 - i0)
+
   const grad = ctx.createLinearGradient(0, 0, 0, h)
   grad.addColorStop(0, 'rgba(122,178,255,0.95)')
   grad.addColorStop(0.5, 'rgba(96,150,240,0.95)')
   grad.addColorStop(1, 'rgba(122,178,255,0.95)')
   ctx.fillStyle = grad
-  for (let i = 0; i < waveData.length; i++) {
-    const amp = waveData[i] * (h / 2 - 4)
-    ctx.fillRect(i * barW, h / 2 - amp, Math.max(1, barW * 0.86), Math.max(1, amp * 2))
+
+  // 按屏幕像素取样，缩放后波形依然贴合时间轴
+  for (let x = 0; x < px; x++) {
+    const a = Math.min(N, i0 + Math.floor(x * count / px))
+    const b = Math.min(N, Math.max(a + 1, i0 + Math.floor((x + 1) * count / px)))
+    let m = 0
+    for (let j = a; j < b; j++) if (waveData[j] > m) m = waveData[j]
+    const amp = m * (h / 2 - 4)
+    ctx.fillRect(x, h / 2 - amp, 1.2, Math.max(1, amp * 2))
   }
 }
 
@@ -1372,10 +1490,30 @@ els.video.addEventListener('timeupdate', () => {
   state.playhead = els.video.currentTime
   updatePlayhead()
   updateTimeLabels()
+  if (!els.video.paused) followPlayhead(els.video.currentTime)
 })
 els.video.addEventListener('play', () => { els.btnPlay.textContent = '❚❚' })
 els.video.addEventListener('pause', () => { els.btnPlay.textContent = '▶' })
 els.video.addEventListener('click', togglePlay)
+
+// 时间轴缩放与平移：Alt+滚轮左右移，Shift/Ctrl+滚轮以光标为锚点缩放
+els.timeline.addEventListener('wheel', e => {
+  if (!state.info) return
+  e.preventDefault()
+  const rect = els.track.getBoundingClientRect()
+  if (e.altKey) {
+    const span = viewSpan()
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+    setView(viewStart() + delta * span / 900, span)
+  } else if (e.shiftKey || e.ctrlKey || e.metaKey) {
+    const pct = clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1)
+    zoomAt(pct, e.deltaY > 0 ? 1.25 : 0.8)
+  }
+}, { passive: false })
+
+els.timeline.addEventListener('dblclick', () => {
+  if (state.info) setView(0, duration())
+})
 
 els.timeline.addEventListener('pointerdown', e => {
   if (!state.info || state.exporting) return
@@ -1445,6 +1583,9 @@ window.addEventListener('keydown', e => {
   if (e.key === 'c' || e.key === 'C') {
     e.preventDefault()
     cutAtPlayhead()
+  } else if (e.key === 'Home') {
+    e.preventDefault()
+    setView(0, duration())
   } else if (e.key === 'ArrowLeft') {
     e.preventDefault()
     stepFrame(e.shiftKey ? -10 : -1)
