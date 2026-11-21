@@ -41,8 +41,6 @@ const els = {
   track: $('track'),
   playhead: $('playhead'),
   snapLine: $('snapLine'),
-  seqTrack: $('seqTrack'),
-  seqInfo: $('seqInfo'),
   viewInfo: $('viewInfo'),
   btnFitAll: $('btnFitAll'),
   timeNow: $('timeNow'),
@@ -85,8 +83,8 @@ const state = {
   outHeightDirty: false,
   view: { start: 0, span: 0 },
   drag: null,
-  seqDrag: null,
-  edgeDrag: null
+  edgeDrag: null,
+  listDrag: null
 }
 
 /* ------------------------------------------------------------------ */
@@ -357,7 +355,6 @@ function applyClickSelect (i, e) {
     state.selected = next
   }
   renderTimeline()
-  renderSeq()
   renderList()
   renderStatus()
   return true
@@ -370,7 +367,6 @@ function applyClickSelect (i, e) {
 function renderAll () {
   renderRuler()
   renderTimeline()
-  renderSeq()
   renderList()
   renderStatus()
   updatePlayhead()
@@ -485,117 +481,6 @@ function renderTimeline () {
   updatePlayhead()
 }
 
-/* ---------------- 成片序列（输出顺序视图） ---------------- */
-
-function renderSeq () {
-  const track = els.seqTrack
-  if (!track) return
-  track.innerHTML = ''
-  const total = segTotal()
-
-  if (!state.segs.length || !total) {
-    track.innerHTML = '<div class="seq-empty">打开素材后，这里按成片顺序排列所有片段</div>'
-    if (els.seqInfo) els.seqInfo.textContent = '—'
-    return
-  }
-
-  const dur = duration()
-  const list = segments()
-  const chosen = list.filter(s => s.selected)
-
-  const fixedPps = state.edgeDrag && state.edgeDrag.source === 'seq' ? state.edgeDrag.pps : 0
-  const pps = fixedPps || (track.clientWidth / Math.max(0.001, total))
-
-  let cum = 0
-  list.forEach((seg, i) => {
-    const d = Math.max(0, seg.end - seg.start)
-    const el = document.createElement('div')
-    el.className = 'seq-clip' + (i % 2 ? ' alt' : '') + (seg.selected ? ' on' : ' no')
-    el.dataset.i = String(i)
-    el.style.left = (cum * pps) + 'px'
-    el.style.width = Math.max(2, d * pps) + 'px'
-    el.title = `输出第 ${i + 1} 段 · 源 ${fmtTime(seg.start)} → ${fmtTime(seg.end)} · ${fmtDur(d)}`
-    if (d * pps < 64) el.classList.add('tight')
-
-    const no = document.createElement('span')
-    no.className = 'seq-no'
-    no.textContent = i + 1
-    const dl = document.createElement('span')
-    dl.className = 'seq-dur'
-    dl.textContent = fmtDur(d)
-    el.append(no, dl)
-
-    const lh = document.createElement('i')
-    lh.className = 'seq-edge l'
-    lh.title = '拖这里改本段起点'
-    lh.addEventListener('pointerdown', e => {
-      e.preventDefault()
-      e.stopPropagation()
-      beginEdge(i, 'start', e, pps, 'seq')
-    })
-
-    const rh = document.createElement('i')
-    rh.className = 'seq-edge r'
-    rh.title = '拖这里改本段终点'
-    rh.addEventListener('pointerdown', e => {
-      e.preventDefault()
-      e.stopPropagation()
-      beginEdge(i, 'end', e, pps, 'seq')
-    })
-
-    el.append(lh, rh)
-
-    el.addEventListener('pointerdown', e => {
-      if (e.button !== 0 || state.exporting) return
-      if (e.altKey || e.shiftKey) return
-      e.preventDefault()
-      e.stopPropagation()
-      state.seqDrag = {
-        from: i,
-        startX: e.clientX,
-        moved: false,
-        insert: null,
-        pps,
-        el
-      }
-    })
-
-    el.addEventListener('click', e => {
-      if (state.suppressSeqClick) {
-        state.suppressSeqClick = false
-        return
-      }
-      if (e.altKey || e.shiftKey) {
-        e.stopPropagation()
-        applyClickSelect(i, e)
-        seekTo(seg.start)
-        return
-      }
-      if (!state.selected.has(i)) {
-        pushUndo()
-        state.selected = new Set([i])
-      }
-      renderTimeline()
-      renderSeq()
-      renderList()
-      renderStatus()
-      seekTo(seg.start)
-    })
-
-    el.addEventListener('dblclick', e => {
-      e.stopPropagation()
-      zoomToSegment(i)
-    })
-
-    track.appendChild(el)
-    cum += d
-  })
-
-  if (els.seqInfo) {
-    els.seqInfo.textContent = `${list.length} 段 · 已选 ${chosen.length} 段 · 成片 ${fmtDur(total)}` +
-      (dur ? ` · 源 ${fmtTime(dur, false)}` : '')
-  }
-}
 
 function zoomToSegment (i, pad = 0.08) {
   const s = state.segs[i]
@@ -701,7 +586,6 @@ function updateEdge (e) {
   }
 
   renderTimeline()
-  renderSeq()
   renderList()
   renderStatus()
 }
@@ -772,6 +656,44 @@ function renderList () {
     })
 
     row.append(cb, idx, start, end, d, drop)
+
+    // 拖动行调整输出顺序
+    row.draggable = true
+    row.addEventListener('dragstart', e => {
+      e.dataTransfer.effectAllowed = 'move'
+      try { e.dataTransfer.setData('text/plain', String(i)) } catch {}
+      state.listDrag = i
+      row.classList.add('dragging')
+    })
+    row.addEventListener('dragend', () => {
+      state.listDrag = null
+      row.classList.remove('dragging')
+      document.querySelectorAll('.clip-row.drop-before, .clip-row.drop-after')
+        .forEach(n => n.classList.remove('drop-before', 'drop-after'))
+    })
+    row.addEventListener('dragover', e => {
+      if (state.listDrag === null || state.listDrag === undefined) return
+      e.preventDefault()
+      e.dataTransfer.dropEffect = 'move'
+      const r = row.getBoundingClientRect()
+      const after = e.clientY >= r.top + r.height / 2
+      row.classList.toggle('drop-before', !after)
+      row.classList.toggle('drop-after', after)
+    })
+    row.addEventListener('dragleave', () => {
+      row.classList.remove('drop-before', 'drop-after')
+    })
+    row.addEventListener('drop', e => {
+      e.preventDefault()
+      const from = state.listDrag
+      if (from === null || from === undefined) return
+      const r = row.getBoundingClientRect()
+      const to = e.clientY >= r.top + r.height / 2 ? i + 1 : i
+      state.listDrag = null
+      row.classList.remove('drop-before', 'drop-after')
+      if (from === to || from === to - 1) return
+      moveSegment(from, to)
+    })
 
     row.addEventListener('click', e => {
       if (e.target === cb || e.target === drop) return
@@ -1614,62 +1536,6 @@ function moveSegment (from, to) {
   toast(`顺序已调整：第 ${from + 1} 段 → 第 ${insert + 1} 段`, true)
 }
 
-/* ---------------- 序列拖动（改顺序） ---------------- */
-
-function updateSeqDrag (e) {
-  const d = state.seqDrag
-  if (!d) return
-  const dx = e.clientX - d.startX
-  if (!d.moved && Math.abs(dx) < 5) return
-  if (!d.moved) {
-    d.moved = true
-    d.el.classList.add('moving')
-  }
-
-  // 以每个块的中点为界，决定插到哪
-  const blocks = [...els.seqTrack.querySelectorAll('.seq-clip')]
-  let insert = state.segs.length
-  let lineX = els.seqTrack.clientWidth
-  for (const el of blocks) {
-    const left = el.offsetLeft
-    if (e.clientX < left + el.offsetWidth / 2) {
-      insert = Number(el.dataset.i)
-      lineX = left
-      break
-    }
-    lineX = left + el.offsetWidth
-  }
-  d.insert = insert
-
-  let line = els.seqTrack.querySelector('.seq-insert')
-  if (!line) {
-    line = document.createElement('div')
-    line.className = 'seq-insert'
-    els.seqTrack.appendChild(line)
-  }
-  line.style.left = Math.max(0, Math.min(els.seqTrack.clientWidth, lineX)) + 'px'
-}
-
-function endSeqDrag () {
-  const d = state.seqDrag
-  if (!d) return
-  state.seqDrag = null
-  state.suppressSeqClick = d.moved
-  if (d.moved) {
-    // 块被重建后 click 可能落空，过一会儿自动清掉，避免吞掉下一次点击
-    setTimeout(() => { state.suppressSeqClick = false }, 250)
-  }
-  const line = els.seqTrack.querySelector('.seq-insert')
-  if (line) line.remove()
-  if (!d.moved) return
-  const insert = d.insert
-  if (insert !== null && insert !== d.from && insert !== d.from + 1) {
-    moveSegment(d.from, insert)
-  } else {
-    renderSeq()
-  }
-}
-
 /* ------------------------------------------------------------------ */
 /* 播放                                                                */
 /* ------------------------------------------------------------------ */
@@ -1958,14 +1824,12 @@ els.timeline.addEventListener('pointerdown', e => {
 
 document.addEventListener('pointermove', e => {
   if (state.edgeDrag) { updateEdge(e); return }
-  if (state.seqDrag) { updateSeqDrag(e); return }
   if (!state.dragging) return
   seekFromEvent(e)
 })
 
 document.addEventListener('pointerup', () => {
   if (state.edgeDrag) endEdge()
-  if (state.seqDrag) endSeqDrag()
   if (state.dragging) {
     state.dragging = false
     state.playhead = els.video.currentTime

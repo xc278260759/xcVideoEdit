@@ -373,16 +373,16 @@ app.whenReady().then(() => {
             moveSegment(2, 0)
             await sleep(150)
             const reordered = snap()
-            const blocks = [...document.querySelectorAll('.seq-clip')].map(el => ({
-              no: el.querySelector('.seq-no').textContent,
-              left: Math.round(el.offsetLeft),
-              w: Math.round(el.offsetWidth),
-              on: el.classList.contains('on')
+            const rows = [...document.querySelectorAll('.clip-row')].map(el => ({
+              idx: el.querySelector('.idx').textContent,
+              start: el.querySelectorAll('.range')[0].textContent,
+              end: el.querySelectorAll('.range')[1].textContent,
+              dur: el.querySelector('.dur').textContent
             }))
-            const first = document.querySelectorAll('.seq-clip')[1]
-            const edge = first.querySelector('.seq-edge.r')
+            const first = document.querySelectorAll('.clip')[1]
+            const edge = first.querySelector('.clip-edge.r')
             const r = edge.getBoundingClientRect()
-            const cx = r.left + 4
+            const cx = r.left + 3
             edge.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, clientX: cx, clientY: r.top + 10, pointerId: 1, button: 0 }))
             document.dispatchEvent(new PointerEvent('pointermove', { bubbles: true, clientX: cx + 60, clientY: r.top + 10, pointerId: 1 }))
             await sleep(80)
@@ -396,9 +396,8 @@ app.whenReady().then(() => {
             redo(); await sleep(120)
             const redone = snap()
             return JSON.stringify({
-              before, reordered, blocks, dragging, snapLineVisible,
+              before, reordered, rows, dragging, snapLineVisible,
               afterEdge, undone, redone,
-              seqInfo: document.getElementById('seqInfo').textContent,
               undoDisabled: document.getElementById('btnUndo').disabled
             })
           })()

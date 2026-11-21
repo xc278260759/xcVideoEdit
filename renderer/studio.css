@@ -208,107 +208,6 @@ body.audio-mode .track { top: 22px; }
 #btnFitAll { min-width: 76px; }
 #btnFitAll:disabled { opacity: .45; cursor: default; }
 
-/* ---------------- 成片序列条 ---------------- */
-
-.seqbar {
-  flex: 0 0 auto;
-  padding: 6px 14px 10px;
-  background: #101418;
-  border-bottom: 1px solid var(--line);
-}
-
-.seq-head {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  height: 24px;
-}
-
-.seq-title { font-size: 12px; font-weight: 600; }
-.seq-info {
-  color: var(--muted);
-  font-size: 11.5px;
-  font-variant-numeric: tabular-nums;
-}
-.seq-hint { color: #6f7d8c; font-size: 11px; white-space: nowrap; }
-
-.seq-track {
-  position: relative;
-  height: 46px;
-  background: #0e1319;
-  border: 1px solid #222b34;
-  border-radius: 6px;
-  overflow: hidden;
-  user-select: none;
-}
-
-.seq-clip {
-  position: absolute;
-  top: 5px;
-  bottom: 5px;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 8px;
-  background: linear-gradient(180deg, #2b3b4d, #213040);
-  border: 1px solid #3d5166;
-  border-radius: 4px;
-  color: #c9d6e4;
-  font-size: 11.5px;
-  cursor: grab;
-  overflow: hidden;
-  box-sizing: border-box;
-}
-
-.seq-clip.on {
-  background: linear-gradient(180deg, #2e5f8f, #234a70);
-  border-color: #4a83b8;
-  color: #eaf3ff;
-}
-
-.seq-clip.no { opacity: .4; filter: grayscale(.35); }
-.seq-clip.moving { opacity: .35; }
-.seq-clip.tight .seq-dur { display: none; }
-
-.seq-clip .seq-no { font-weight: 600; color: #fff; flex: none; }
-.seq-clip .seq-dur { color: #a6b6c6; white-space: nowrap; }
-
-.seq-edge {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 9px;
-  z-index: 2;
-  cursor: ew-resize;
-}
-.seq-edge.l { left: -1px; }
-.seq-edge.r { right: -1px; }
-.seq-edge::after {
-  content: '';
-  position: absolute;
-  top: 7px;
-  bottom: 7px;
-  width: 3px;
-  border-radius: 2px;
-  background: transparent;
-}
-.seq-edge.l::after { left: 2px; }
-.seq-edge.r::after { right: 2px; }
-.seq-clip:hover .seq-edge::after { background: rgba(150, 196, 255, .55); }
-
-.seq-insert {
-  position: absolute;
-  top: 0;
-  bottom: 0;
-  width: 2px;
-  background: #ffd166;
-  box-shadow: 0 0 8px rgba(255, 209, 102, .7);
-  pointer-events: none;
-  z-index: 5;
-}
-
-.seq-empty { padding: 13px 12px; color: #6b7785; font-size: 12px; }
-
 /* 主轨片段边缘拖拽 */
 .clip .clip-edge {
   position: absolute;
@@ -347,7 +246,11 @@ body.audio-mode .track { top: 22px; }
 }
 .snap-line[hidden] { display: none; }
 
-body.audio-mode .seq-hint { display: none; }
+/* 片段列表拖行调顺序 */
+.clip-row.dragging { opacity: .45; }
+.clip-row.drop-before { box-shadow: inset 0 2px 0 #ffd166; }
+.clip-row.drop-after { box-shadow: inset 0 -2px 0 #ffd166; }
+.clip-hint { color: #6f7d8c; font-size: 11px; }
 
-/* 新增序列条后回收列表高度，保住预览区 */
+/* 列表区高度 */
 .clip-panel { flex: 0 0 196px; }
