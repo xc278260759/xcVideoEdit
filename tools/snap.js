@@ -156,6 +156,13 @@ app.whenReady().then(() => {
         console.log('GEOM', geom)
       } catch {}
 
+      try {
+        const muted = await win.webContents.executeJavaScript(
+          '(() => { const v = document.getElementById("video"); return v ? v.muted : "NO_VIDEO" })()'
+        )
+        console.log('MUTED', muted)
+      } catch {}
+
       if (scalePct) {
         await win.webContents.executeJavaScript(`
           (() => {

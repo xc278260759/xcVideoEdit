@@ -32,3 +32,15 @@
 .mode-hint { display: none; }
 .out-size { min-width: 148px; color: var(--text); }
 
+/* 静音开关：默认静音，按钮标红 */
+#btnMute { font-size: 15px; line-height: 1; }
+.btn.icon.mute-on {
+  color: #ff8b84;
+  border-color: #5a2b2b;
+  background: #2a1d1d;
+}
+.btn.icon.mute-on:hover:not(:disabled) {
+  background: #352323;
+  border-color: #7a3b3b;
+}
+

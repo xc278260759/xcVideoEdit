@@ -13,6 +13,7 @@ const els = {
   btnPlay: $('btnPlay'),
   btnPrev: $('btnPrev'),
   btnNext: $('btnNext'),
+  btnMute: $('btnMute'),
   btnCutTop: $('btnCutTop'),
   btnExport: $('btnExport'),
   btnSelectAll: $('btnSelectAll'),
@@ -55,6 +56,7 @@ const state = {
   mode: 'lossless',
   exporting: false,
   dragging: false,
+  muted: true,
 
   preset: 'source',
   ratio: null,
@@ -627,6 +629,7 @@ async function loadVideo (file) {
 
     els.video.src = toXcUrl(file)
     els.video.load()
+    els.video.muted = state.muted
 
     els.btnPlay.disabled = false
     els.btnPrev.disabled = false
@@ -685,6 +688,14 @@ function togglePlay () {
   if (!state.info) return
   if (els.video.paused) els.video.play().catch(() => {})
   else els.video.pause()
+}
+
+function setMuted (m) {
+  state.muted = !!m
+  els.video.muted = state.muted
+  els.btnMute.textContent = state.muted ? '🔇' : '🔊'
+  els.btnMute.title = state.muted ? '静音开关（当前：静音）' : '静音开关（当前：有声）'
+  els.btnMute.classList.toggle('mute-on', state.muted)
 }
 
 function stepFrame (dir) {
@@ -779,6 +790,7 @@ els.btnOpen.addEventListener('click', async () => {
 })
 
 els.btnPlay.addEventListener('click', togglePlay)
+els.btnMute.addEventListener('click', () => setMuted(!state.muted))
 els.btnPrev.addEventListener('click', () => stepFrame(-1))
 els.btnNext.addEventListener('click', () => stepFrame(1))
 els.btnCutTop.addEventListener('click', cutAtPlayhead)
@@ -934,3 +946,4 @@ const initialVideo = new URLSearchParams(location.search).get('video')
 if (initialVideo) loadVideo(initialVideo)
 
 els.modeHint.textContent = '切点对齐关键帧，秒出片（起点可能前后偏移）'
+setMuted(true)
