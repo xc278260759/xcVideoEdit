@@ -69,6 +69,7 @@ const vfArg = process.argv.find(a => a.startsWith('--vf='))
 const vf = vfArg ? vfArg.slice(5) : null
 const scaleArg = process.argv.find(a => a.startsWith('--scale='))
 const scalePct = scaleArg ? scaleArg.slice(8) : null
+const selTest = process.argv.includes('--seltest')
 
 app.whenReady().then(() => {
   protocol.handle('xcfile', async req => {
@@ -200,6 +201,34 @@ app.whenReady().then(() => {
         `)
         console.log('CUTDIAG', diag)
         await new Promise(r => setTimeout(r, 800))
+      }
+
+      if (selTest) {
+        const res = await win.webContents.executeJavaScript(`
+          (async () => {
+            const sleep = ms => new Promise(r => setTimeout(r, ms))
+            const count = () => document.querySelectorAll('.clip.on').length
+            document.getElementById('btnSelectAll').click()
+            await sleep(120)
+            const before = count()
+            const fire = (el, opts) => {
+              el.dispatchEvent(new PointerEvent('pointerdown', { ...opts, bubbles: true, cancelable: true }))
+              el.dispatchEvent(new MouseEvent('click', { ...opts, bubbles: true, cancelable: true }))
+            }
+            const clips = [...document.querySelectorAll('.clip')]
+            fire(clips[1], { altKey: true })
+            await sleep(150)
+            const afterAlt = count()
+            const clips2 = [...document.querySelectorAll('.clip')]
+            fire(clips2[2], { shiftKey: true })
+            await sleep(150)
+            const afterShift = count()
+            const checked = document.querySelectorAll('.clip-row input:checked').length
+            return JSON.stringify({ total: clips.length, before, afterAlt, afterShift, checked })
+          })()
+        `)
+        console.log('SELTEST', res)
+        await new Promise(r => setTimeout(r, 200))
       }
 
       if (exportOut && segs) {

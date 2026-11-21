@@ -155,6 +155,21 @@ function reselectAll () {
   state.selected = new Set(segments().map(s => s.index))
 }
 
+// 修饰键点选：Alt 只留当前片段，Shift 追加选中
+function applyClickSelect (i, e) {
+  if (e.altKey) {
+    state.selected = new Set([i])
+  } else if (e.shiftKey) {
+    state.selected = new Set([...state.selected, i])
+  } else {
+    return false
+  }
+  renderTimeline()
+  renderList()
+  renderStatus()
+  return true
+}
+
 /* ------------------------------------------------------------------ */
 /* 渲染                                                                */
 /* ------------------------------------------------------------------ */
@@ -220,6 +235,21 @@ function renderTimeline () {
     d.textContent = fmtDur(seg.end - seg.start)
 
     el.append(no, d)
+
+    // Alt / Shift 点选：只改选择，不触发时间轴拖动
+    el.addEventListener('pointerdown', e => {
+      if (e.altKey || e.shiftKey) {
+        e.preventDefault()
+        e.stopPropagation()
+      }
+    })
+    el.addEventListener('click', e => {
+      if (!(e.altKey || e.shiftKey)) return
+      e.stopPropagation()
+      applyClickSelect(i, e)
+      seekTo(seg.start)
+    })
+
     els.track.appendChild(el)
   })
 
@@ -280,6 +310,7 @@ function renderList () {
 
     row.addEventListener('click', e => {
       if (e.target === cb || e.target === drop) return
+      applyClickSelect(i, e)
       seekTo(seg.start)
     })
 
