@@ -1,0 +1,28 @@
+{
+  "app": "xcVideoEdit",
+  "version": 2,
+  "file": "E:\\XC_Tools\\App\\xcVideoEdit\\tools\\test_1080p.mp4",
+  "mediaName": "test_1080p.mp4",
+  "cuts": [
+    1,
+    2
+  ],
+  "selected": [
+    0,
+    1,
+    2
+  ],
+  "sel": {
+    "x": 0.3416916167664671,
+    "y": 0,
+    "w": 0.3166167664670659,
+    "h": 1
+  },
+  "preset": "9:16",
+  "outHeight": 1080,
+  "outHeightManual": false,
+  "mode": "lossless",
+  "muted": true,
+  "playhead": 2,
+  "savedAt": "2026-11-21T11:34:44.859Z"
+}

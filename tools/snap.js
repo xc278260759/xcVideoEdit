@@ -6,6 +6,7 @@ const path = require('node:path')
 const fs = require('node:fs')
 const { Readable } = require('node:stream')
 const { spawn } = require('node:child_process')
+const crypto = require('node:crypto')
 const { exportSegments } = require('../lib/exporter')
 const { safePathFromUrl } = require('../lib/localpath')
 const { pathToFileURL } = require('node:url')
@@ -84,6 +85,9 @@ const scaleArg = process.argv.find(a => a.startsWith('--scale='))
 const scalePct = scaleArg ? scaleArg.slice(8) : null
 const selTest = process.argv.includes('--seltest')
 const audioTest = process.argv.includes('--audiotest')
+const historyTest = process.argv.includes('--historytest')
+const thumbTest = process.argv.includes('--thumbtest')
+const projTest = process.argv.includes('--projtest')
 
 app.whenReady().then(() => {
   protocol.handle('xcfile', async req => {
@@ -126,6 +130,38 @@ app.whenReady().then(() => {
   ipcMain.handle('audio:read', async (_e, file) => {
     const buf = await fs.promises.readFile(file)
     return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+  })
+
+  ipcMain.handle('video:thumbs', async (_e, file) => {
+    const st = await fs.promises.stat(file)
+    const key = crypto.createHash('md5').update(`${file}|${st.size}|${st.mtimeMs}`).digest('hex').slice(0, 16)
+    const dir = path.join(app.getPath('userData'), 'thumb-cache', key)
+    const readJpgs = async () => (await fs.promises.readdir(dir).catch(() => [])).filter(f => f.endsWith('.jpg')).sort()
+    const cached = await readJpgs()
+    if (cached.length >= 24) return { dir, count: cached.length, files: cached }
+    const info = await probe(file).catch(() => null)
+    const dur = (info && info.duration) || 0
+    if (!dur) throw new Error('no duration')
+    fs.mkdirSync(dir, { recursive: true })
+    await new Promise((resolve, reject) => {
+      const p = spawn('F:\\Tools\\ffmpeg\\bin\\ffmpeg.exe', [
+        '-y', '-v', 'error', '-i', file,
+        '-vf', `fps=${(24 / dur).toFixed(6)},scale=160:-2`,
+        '-frames:v', '24', '-q:v', '4',
+        path.join(dir, 'thumb_%03d.jpg')
+      ], { windowsHide: true })
+      let err = ''
+      p.stderr.on('data', d => { err += d })
+      p.on('error', reject)
+      p.on('close', c => c === 0 ? resolve() : reject(new Error(err.trim() || 'thumb failed')))
+    })
+    const files = await readJpgs()
+    return { dir, count: files.length, files }
+  })
+
+  ipcMain.handle('project:write', async (_e, file, data) => {
+    await fs.promises.writeFile(file, JSON.stringify(data, null, 2), 'utf8')
+    return file
   })
 
   ipcMain.handle('edit:export', (_e, opts) => exportSegments(
@@ -268,6 +304,95 @@ app.whenReady().then(() => {
           })
         `)
         console.log('AUDIOTEST', res)
+        await new Promise(r => setTimeout(r, 300))
+      }
+
+      if (historyTest) {
+        const res = await win.webContents.executeJavaScript(`
+          (async () => {
+            const sleep = ms => new Promise(r => setTimeout(r, ms))
+            const v = document.getElementById('video')
+            const btn = document.getElementById('btnCutTop')
+            v.currentTime = 1
+            await sleep(500)
+            btn.click()
+            v.currentTime = 2
+            await sleep(500)
+            btn.click()
+            await sleep(300)
+            const before = state.cuts.length
+            undo()
+            await sleep(200)
+            const afterUndo = state.cuts.length
+            const undoDisabled = document.getElementById('btnUndo').disabled
+            redo()
+            await sleep(200)
+            const afterRedo = state.cuts.length
+            const redoDisabled = document.getElementById('btnRedo').disabled
+            return JSON.stringify({ before, afterUndo, afterRedo, undoDisabled, redoDisabled })
+          })()
+        `)
+        console.log('HISTORYTEST', res)
+        await new Promise(r => setTimeout(r, 300))
+      }
+
+      if (thumbTest) {
+        const res = await win.webContents.executeJavaScript(`
+          (async () => {
+            const sleep = ms => new Promise(r => setTimeout(r, ms))
+            for (let i = 0; i < 48; i++) {
+              if (document.querySelectorAll('#thumbs img').length) break
+              await sleep(250)
+            }
+            await sleep(600)
+            const imgs = [...document.querySelectorAll('#thumbs img')]
+            const box = document.getElementById('thumbs')
+            return JSON.stringify({
+              count: imgs.length,
+              loaded: imgs.filter(i => i.naturalWidth > 0).length,
+              bandH: box.clientHeight,
+              timelineH: document.getElementById('timeline').clientHeight,
+              firstSrc: imgs[0] ? imgs[0].src.slice(-30) : null
+            })
+          })()
+        `)
+        console.log('THUMBTEST', res)
+      }
+
+      if (projTest) {
+        const projPath = path.join(__dirname, 'test_project.xcproj')
+        const beforeRaw = await win.webContents.executeJavaScript(`
+          (async () => {
+            const p = collectProject()
+            await window.xc.writeProject(${JSON.stringify(projPath)}, p)
+            state.cuts = []
+            state.selected = new Set([0])
+            state.sel = { x: 0, y: 0, w: 1, h: 1 }
+            state.outHeightManual = false
+            renderAll()
+            renderCrop()
+            return JSON.stringify(p)
+          })()
+        `)
+        const data = JSON.parse(fs.readFileSync(projPath, 'utf8'))
+        const afterRaw = await win.webContents.executeJavaScript(`
+          (() => {
+            applyProject(${JSON.stringify(data)})
+            return JSON.stringify({
+              cuts: state.cuts.length,
+              selected: state.selected.size,
+              sel: state.sel,
+              preset: state.preset,
+              outHeight: state.outHeight,
+              mode: state.mode,
+              undoDisabled: document.getElementById('btnUndo').disabled
+            })
+          })()
+        `)
+        console.log('PROJTEST', JSON.stringify({
+          saved: JSON.parse(beforeRaw),
+          restored: JSON.parse(afterRaw)
+        }))
         await new Promise(r => setTimeout(r, 300))
       }
 

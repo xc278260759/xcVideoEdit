@@ -133,3 +133,54 @@ body.audio-mode #crop { display: none !important; }
 }
 
 .audio-foot { font-size: 12px; color: #8a94a6; }
+
+/* ---------------- 时间轴缩略图带 ---------------- */
+
+.timeline { height: 122px; }
+
+.thumbs {
+  position: absolute;
+  top: 22px;
+  left: 0;
+  right: 0;
+  height: 34px;
+  display: flex;
+  background: #0b1015;
+  border-bottom: 1px solid #222b34;
+  overflow: hidden;
+  z-index: 2;
+}
+
+.thumbs .thumb {
+  display: block;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+  object-fit: cover;
+  opacity: 0.82;
+  cursor: pointer;
+  border-right: 1px solid rgba(0, 0, 0, 0.45);
+}
+
+.thumbs .thumb:hover { opacity: 1; }
+
+.thumbs .thumbs-fail {
+  font-size: 11px;
+  color: #7d8a97;
+  padding: 10px 12px;
+}
+
+.track { top: 56px; }
+
+body.audio-mode .thumbs { display: none; }
+body.audio-mode .timeline { height: 92px; }
+body.audio-mode .track { top: 22px; }
+
+/* 撤销/重做与工程按钮 */
+#btnUndo, #btnRedo { min-width: 44px; }
+#btnOpenProj, #btnSaveProj { padding: 5px 10px; font-size: 12px; }
+
+/* 窄窗口让出空间给右侧主要按钮 */
+@media (max-width: 1300px) {
+  .out-size { display: none; }
+}

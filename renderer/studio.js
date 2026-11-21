@@ -17,6 +17,10 @@ const els = {
   audioCursor: $('audioCursor'),
   wave: $('wave'),
   btnOpen: $('btnOpen'),
+  btnOpenProj: $('btnOpenProj'),
+  btnSaveProj: $('btnSaveProj'),
+  btnUndo: $('btnUndo'),
+  btnRedo: $('btnRedo'),
   btnPlay: $('btnPlay'),
   btnPrev: $('btnPrev'),
   btnNext: $('btnNext'),
@@ -32,6 +36,7 @@ const els = {
   mode: $('mode'),
   modeHint: $('modeHint'),
   timeline: $('timeline'),
+  thumbs: $('thumbs'),
   ruler: $('ruler'),
   track: $('track'),
   playhead: $('playhead'),
@@ -65,12 +70,14 @@ const state = {
   dragging: false,
   muted: true,
   isAudio: false,
+  projectPath: null,
 
   preset: 'source',
   ratio: null,
   sel: { x: 0, y: 0, w: 1, h: 1 },
   outHeight: 1080,
   outHeightManual: false,
+  outHeightDirty: false,
   drag: null
 }
 
@@ -159,18 +166,96 @@ function segments () {
   return list
 }
 
+/* ------------------------------------------------------------------ */
+/* 撤销 / 重做                                                         */
+/* ------------------------------------------------------------------ */
+
+const hist = { past: [], future: [], limit: 100 }
+
+function snapshotState () {
+  return {
+    cuts: state.cuts.slice(),
+    selected: [...state.selected],
+    sel: { ...state.sel },
+    outHeight: state.outHeight,
+    outHeightManual: state.outHeightManual,
+    preset: state.preset,
+    mode: state.mode,
+    playhead: state.playhead
+  }
+}
+
+function pushUndo () {
+  if (state.exporting || !state.info) return
+  hist.past.push(snapshotState())
+  if (hist.past.length > hist.limit) hist.past.shift()
+  hist.future.length = 0
+  updateHistoryUI()
+}
+
+function restoreSnapshot (s) {
+  state.cuts = s.cuts.slice()
+  state.selected = new Set(s.selected)
+  state.sel = { ...s.sel }
+  state.outHeight = s.outHeight
+  state.outHeightManual = s.outHeightManual
+  state.preset = s.preset
+  state.ratio = state.isAudio ? null : presetRatio(s.preset)
+  state.mode = s.mode
+
+  if (els.ratio) els.ratio.value = s.preset
+  if (els.mode) els.mode.value = s.mode
+  if (els.outHeight) els.outHeight.value = String(s.outHeight)
+  updateModeHint()
+
+  seekTo(s.playhead)
+  renderAll()
+  renderCrop()
+}
+
+function updateHistoryUI () {
+  if (els.btnUndo) els.btnUndo.disabled = !hist.past.length
+  if (els.btnRedo) els.btnRedo.disabled = !hist.future.length
+}
+
+function undo () {
+  if (!hist.past.length) return
+  hist.future.push(snapshotState())
+  restoreSnapshot(hist.past.pop())
+  updateHistoryUI()
+  toast('已撤销')
+}
+
+function redo () {
+  if (!hist.future.length) return
+  hist.past.push(snapshotState())
+  restoreSnapshot(hist.future.pop())
+  updateHistoryUI()
+  toast('已重做')
+}
+
+function clearHistory () {
+  hist.past.length = 0
+  hist.future.length = 0
+  updateHistoryUI()
+}
+
 function reselectAll () {
   state.selected = new Set(segments().map(s => s.index))
 }
 
 // 修饰键点选：Alt 只留当前片段，Shift 追加选中
 function applyClickSelect (i, e) {
-  if (e.altKey) {
-    state.selected = new Set([i])
-  } else if (e.shiftKey) {
-    state.selected = new Set([...state.selected, i])
-  } else {
-    return false
+  let next = null
+  if (e.altKey) next = new Set([i])
+  else if (e.shiftKey) next = new Set([...state.selected, i])
+  else return false
+
+  const before = [...state.selected].sort((a, b) => a - b).join(',')
+  const after = [...next].sort((a, b) => a - b).join(',')
+  if (before !== after) {
+    pushUndo()
+    state.selected = next
   }
   renderTimeline()
   renderList()
@@ -281,6 +366,7 @@ function renderList () {
     cb.type = 'checkbox'
     cb.checked = seg.selected
     cb.addEventListener('change', () => {
+      pushUndo()
       if (cb.checked) state.selected.add(i)
       else state.selected.delete(i)
       renderTimeline()
@@ -539,6 +625,8 @@ function renderCrop () {
 
 function beginDrag (e, mode, dir) {
   if (!state.info || state.exporting) return
+  pushUndo()
+  const guard = { sel: { ...state.sel }, undoIndex: hist.past.length }
   e.preventDefault()
   e.stopPropagation()
 
@@ -546,6 +634,7 @@ function beginDrag (e, mode, dir) {
   state.drag = {
     mode,
     dir,
+    guard,
     startX: e.clientX,
     startY: e.clientY,
     start: selToPx(state.sel, W, H),
@@ -660,10 +749,22 @@ function resizeRect (start, dir, dx, dy, ratio, W, H) {
 
 function endDrag (e) {
   if (!state.drag) return
+  const d = state.drag
   state.drag = null
   els.crop.classList.remove('active')
   try { els.crop.releasePointerCapture?.(e.pointerId) } catch {}
   renderCrop()
+
+  // 只是点了一下没拖动：撤掉这条空历史
+  if (d.guard && hist.past.length === d.guard.undoIndex) {
+    const a = d.guard.sel
+    const b = state.sel
+    if (Math.abs(a.x - b.x) < 0.0005 && Math.abs(a.y - b.y) < 0.0005 &&
+        Math.abs(a.w - b.w) < 0.0005 && Math.abs(a.h - b.h) < 0.0005) {
+      hist.past.pop()
+      updateHistoryUI()
+    }
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -681,6 +782,7 @@ async function loadVideo (file) {
     state.playhead = 0
     state.selected = new Set([0])
     state.outHeightManual = false
+    state.outHeightDirty = false
     state.preset = 'source'
     state.ratio = state.isAudio ? null : presetRatio('source')
     state.sel = { x: 0, y: 0, w: 1, h: 1 }
@@ -731,9 +833,167 @@ async function loadVideo (file) {
     layoutFrame()
     if (!state.isAudio) fitPreset(state.preset)
     renderAll()
+    clearHistory()
+    state.projectPath = null
+    buildThumbs(file)
+    return true
   } catch (err) {
     toast('无法读取这个文件：\n' + (err.message || err))
+    return false
   }
+}
+
+/* ------------------------------------------------------------------ */
+/* 工程文件                                                            */
+/* ------------------------------------------------------------------ */
+
+function defaultProjectPath (file) {
+  const dir = file.replace(/[\\/][^\\/]+$/, '')
+  const name = file.replace(/^.*[\\/]/, '').replace(/\.\w+$/, '')
+  return dir + '\\' + name + '.xcproj'
+}
+
+function collectProject () {
+  return {
+    app: 'xcVideoEdit',
+    version: 2,
+    file: state.file,
+    mediaName: state.file ? state.file.replace(/^.*[\\/]/, '') : '',
+    cuts: state.cuts.slice(),
+    selected: [...state.selected].sort((a, b) => a - b),
+    sel: { ...state.sel },
+    preset: state.preset,
+    outHeight: state.outHeight,
+    outHeightManual: state.outHeightManual,
+    mode: state.mode,
+    muted: state.muted,
+    playhead: state.playhead,
+    savedAt: new Date().toISOString()
+  }
+}
+
+async function saveProject (asNew = false) {
+  if (!state.info) {
+    toast('先打开视频或音频，再保存工程')
+    return
+  }
+  try {
+    const data = collectProject()
+    if (state.projectPath && !asNew) {
+      await window.xc.writeProject(state.projectPath, data)
+      toast('工程已保存：\n' + state.projectPath, true)
+      return
+    }
+    const p = await window.xc.saveProject(data, defaultProjectPath(state.file))
+    if (!p) return
+    state.projectPath = p
+    toast('工程已保存：\n' + p, true)
+  } catch (e) {
+    toast('保存工程失败：\n' + (e.message || e))
+  }
+}
+
+async function openProjectFile () {
+  try {
+    const res = await window.xc.openProject()
+    if (!res) return
+    const d = res.data || {}
+    if (!d.file) {
+      toast('工程文件缺少素材路径，无法打开')
+      return
+    }
+    const ok = await loadVideo(d.file)
+    if (!ok) return
+    applyProject(d)
+    state.projectPath = res.path
+    toast('已打开工程：\n' + res.path, true)
+  } catch (e) {
+    toast('打开工程失败：\n' + (e.message || e))
+  }
+}
+
+function applyProject (d) {
+  const dur = duration()
+  state.cuts = (d.cuts || [])
+    .map(Number)
+    .filter(n => Number.isFinite(n) && n > 0.02 && n < dur - 0.02)
+    .sort((a, b) => a - b)
+
+  const list = segments()
+  const picked = new Set((d.selected || []).map(Number).filter(n => n >= 0 && n < list.length))
+  state.selected = picked.size ? picked : new Set(list.map(s => s.index))
+
+  if (d.sel && Number.isFinite(d.sel.x)) {
+    state.sel = {
+      x: clamp(Number(d.sel.x), 0, 1),
+      y: clamp(Number(d.sel.y), 0, 1),
+      w: clamp(Number(d.sel.w), 0.01, 1),
+      h: clamp(Number(d.sel.h), 0.01, 1)
+    }
+  }
+
+  if (Number.isFinite(d.outHeight) && d.outHeight >= 2) state.outHeight = even(d.outHeight)
+  state.outHeightManual = !!d.outHeightManual
+  state.preset = d.preset || 'source'
+  state.ratio = state.isAudio ? null : presetRatio(state.preset)
+  state.mode = d.mode === 'precise' ? 'precise' : 'lossless'
+
+  if (els.ratio) els.ratio.value = state.preset
+  if (els.mode) els.mode.value = state.mode
+  if (els.outHeight) els.outHeight.value = String(state.outHeight)
+  if (d.muted !== undefined) setMuted(!!d.muted)
+  updateModeHint()
+
+  if (Number.isFinite(d.playhead)) {
+    const target = d.playhead
+    seekTo(target)
+    // 视频元数据还没就绪时，等 loadedmetadata 再定位一次
+    if (Math.abs((els.video.currentTime || 0) - target) > 0.2) {
+      els.video.addEventListener('loadedmetadata', () => seekTo(target), { once: true })
+    }
+  }
+  renderAll()
+  renderCrop()
+  clearHistory()
+}
+
+/* ------------------------------------------------------------------ */
+/* 时间轴缩略图                                                        */
+/* ------------------------------------------------------------------ */
+
+let thumbToken = 0
+
+async function buildThumbs (file) {
+  const token = ++thumbToken
+  els.thumbs.innerHTML = ''
+  if (state.isAudio || !file) return
+  try {
+    const res = await window.xc.getThumbs(file)
+    if (token !== thumbToken) return
+    renderThumbs(res)
+  } catch {
+    if (token !== thumbToken) return
+    els.thumbs.innerHTML = '<span class="thumbs-fail">缩略图不可用</span>'
+  }
+}
+
+function renderThumbs (res) {
+  els.thumbs.innerHTML = ''
+  if (!res || !res.files || !res.files.length) return
+  const n = res.files.length
+  res.files.forEach((name, i) => {
+    const img = document.createElement('img')
+    img.className = 'thumb'
+    img.loading = 'lazy'
+    img.draggable = false
+    img.src = toXcUrl(res.dir + '\\' + name)
+    img.title = `第 ${i + 1} / ${n} 帧`
+    img.addEventListener('click', e => {
+      e.stopPropagation()
+      seekTo((i + 0.5) * duration() / n)
+    })
+    els.thumbs.appendChild(img)
+  })
 }
 
 /* ------------------------------------------------------------------ */
@@ -851,6 +1111,7 @@ function cutAtPlayhead () {
     return
   }
 
+  pushUndo()
   state.cuts.push(t)
   state.cuts.sort((a, b) => a - b)
   reselectAll()
@@ -859,6 +1120,7 @@ function cutAtPlayhead () {
 
 function removeCut (t) {
   if (!t) return
+  pushUndo()
   state.cuts = state.cuts.filter(c => Math.abs(c - t) > 0.05)
   reselectAll()
   renderAll()
@@ -1012,6 +1274,11 @@ els.btnOpen.addEventListener('click', async () => {
   if (file) loadVideo(file)
 })
 
+els.btnUndo.addEventListener('click', undo)
+els.btnRedo.addEventListener('click', redo)
+els.btnSaveProj.addEventListener('click', () => saveProject(false))
+els.btnOpenProj.addEventListener('click', openProjectFile)
+
 els.btnPlay.addEventListener('click', togglePlay)
 els.btnMute.addEventListener('click', () => setMuted(!state.muted))
 els.btnPrev.addEventListener('click', () => stepFrame(-1))
@@ -1020,6 +1287,7 @@ els.btnCutTop.addEventListener('click', cutAtPlayhead)
 els.btnExport.addEventListener('click', doExport)
 
 els.btnSelectAll.addEventListener('click', () => {
+  pushUndo()
   state.selected = new Set(segments().map(s => s.index))
   renderTimeline()
   renderList()
@@ -1027,6 +1295,7 @@ els.btnSelectAll.addEventListener('click', () => {
 })
 
 els.btnSelectNone.addEventListener('click', () => {
+  pushUndo()
   state.selected = new Set()
   renderTimeline()
   renderList()
@@ -1034,6 +1303,7 @@ els.btnSelectNone.addEventListener('click', () => {
 })
 
 els.ratio.addEventListener('change', () => {
+  pushUndo()
   state.preset = els.ratio.value
   state.ratio = presetRatio(state.preset)
   fitPreset(state.preset)
@@ -1042,10 +1312,19 @@ els.ratio.addEventListener('change', () => {
 els.outHeight.addEventListener('input', () => {
   const v = parseInt(els.outHeight.value, 10)
   if (Number.isFinite(v) && v >= 2) {
+    // 一次连续输入只记一条历史
+    if (!state.outHeightDirty) {
+      pushUndo()
+      state.outHeightDirty = true
+    }
     state.outHeightManual = true
     state.outHeight = v
     renderCrop()
   }
+})
+
+els.outHeight.addEventListener('change', () => {
+  state.outHeightDirty = false
 })
 
 els.scalePct.addEventListener('change', () => {
@@ -1054,6 +1333,7 @@ els.scalePct.addEventListener('change', () => {
 
   const g = calcGeom()
   if (!g) return
+  pushUndo()
   state.outHeightManual = true
   state.outHeight = Math.max(2, even(g.ch * v / 100))
   els.outHeight.value = String(state.outHeight)
@@ -1061,6 +1341,7 @@ els.scalePct.addEventListener('change', () => {
 })
 
 els.mode.addEventListener('change', () => {
+  pushUndo()
   state.mode = els.mode.value
   updateModeHint()
   renderStatus()
@@ -1121,7 +1402,37 @@ window.addEventListener('resize', layoutFrame)
 
 window.addEventListener('keydown', e => {
   const tag = (e.target.tagName || '').toLowerCase()
-  if (tag === 'input' || tag === 'select' || tag === 'textarea') return
+  const typing = tag === 'input' || tag === 'select' || tag === 'textarea'
+  const ctrl = e.ctrlKey || e.metaKey
+
+  if (ctrl && (e.key === 'z' || e.key === 'Z')) {
+    e.preventDefault()
+    if (e.shiftKey) redo()
+    else undo()
+    return
+  }
+  if (ctrl && (e.key === 'y' || e.key === 'Y')) {
+    e.preventDefault()
+    redo()
+    return
+  }
+  if (ctrl && !e.shiftKey && (e.key === 's' || e.key === 'S')) {
+    e.preventDefault()
+    saveProject(false)
+    return
+  }
+  if (ctrl && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+    e.preventDefault()
+    saveProject(true)
+    return
+  }
+  if (ctrl && e.shiftKey && (e.key === 'o' || e.key === 'O')) {
+    e.preventDefault()
+    openProjectFile()
+    return
+  }
+
+  if (typing) return
 
   if (e.code === 'Space') {
     e.preventDefault()
@@ -1168,4 +1479,5 @@ if (initialVideo) loadVideo(initialVideo)
 
 els.modeHint.textContent = '切点对齐关键帧，秒出片（起点可能前后偏移）'
 updateModeHint()
+updateHistoryUI()
 setMuted(true)

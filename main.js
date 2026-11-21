@@ -5,6 +5,7 @@ const path = require('node:path')
 const fs = require('node:fs')
 const { Readable } = require('node:stream')
 const { spawn } = require('node:child_process')
+const crypto = require('node:crypto')
 const { exportSegments } = require('./lib/exporter')
 const { safePathFromUrl } = require('./lib/localpath')
 
@@ -22,7 +23,8 @@ const MIME = {
   '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.m4b': 'audio/mp4',
   '.aac': 'audio/aac', '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg',
   '.opus': 'audio/ogg', '.wma': 'audio/x-ms-wma', '.aif': 'audio/aiff', '.aiff': 'audio/aiff',
-  '.ape': 'audio/x-ape', '.amr': 'audio/amr', '.caf': 'audio/x-caf'
+  '.ape': 'audio/x-ape', '.amr': 'audio/amr', '.caf': 'audio/x-caf',
+  '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp'
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -191,6 +193,58 @@ function even (n) {
   return Math.max(2, v - (v % 2))
 }
 
+/* ------------------------------------------------------------------ */
+/* 时间轴缩略图                                                        */
+/* ------------------------------------------------------------------ */
+
+const THUMB_COUNT = 24
+
+async function makeThumbs (file) {
+  const st = await fs.promises.stat(file)
+  const key = crypto
+    .createHash('md5')
+    .update(`${file}|${st.size}|${st.mtimeMs}`)
+    .digest('hex')
+    .slice(0, 16)
+  const dir = path.join(app.getPath('userData'), 'thumb-cache', key)
+
+  const readJpgs = async () => {
+    const names = await fs.promises.readdir(dir).catch(() => [])
+    return names.filter(f => f.toLowerCase().endsWith('.jpg')).sort()
+  }
+
+  const cached = await readJpgs()
+  if (cached.length >= THUMB_COUNT) {
+    return { dir, count: cached.length, files: cached }
+  }
+
+  const info = await probe(file).catch(() => null)
+  const dur = (info && info.duration) || 0
+  if (!dur) throw new Error('无法获取时长，不能生成缩略图')
+
+  fs.mkdirSync(dir, { recursive: true })
+  const fps = Math.max(0.000001, THUMB_COUNT / dur)
+
+  await new Promise((resolve, reject) => {
+    const p = spawn(FFMPEG, [
+      '-y', '-v', 'error', '-i', file,
+      '-vf', `fps=${fps.toFixed(6)},scale=160:-2`,
+      '-frames:v', String(THUMB_COUNT), '-q:v', '4',
+      path.join(dir, 'thumb_%03d.jpg')
+    ], { windowsHide: true })
+    let err = ''
+    p.stderr.on('data', d => { err += d.toString() })
+    p.on('error', reject)
+    p.on('close', code => {
+      if (code === 0) resolve()
+      else reject(new Error(err.trim() || '缩略图生成失败'))
+    })
+  })
+
+  const files = await readJpgs()
+  return { dir, count: files.length, files }
+}
+
 function buildFilter (crop, srcW, srcH, outHeight) {
   let cw = even(Math.min(crop.w, srcW))
   let ch = even(Math.min(crop.h, srcH))
@@ -330,6 +384,38 @@ if (!gotTheLock) {
   })
 
   ipcMain.handle('video:probe', async (_e, file) => probe(file))
+
+  ipcMain.handle('video:thumbs', async (_e, file) => makeThumbs(file))
+
+  ipcMain.handle('project:save', async (_e, data, defaultPath) => {
+    const result = await dialog.showSaveDialog(win, {
+      title: '保存工程',
+      defaultPath,
+      filters: [{ name: 'xcVideoEdit 工程', extensions: ['xcproj'] }]
+    })
+    if (result.canceled || !result.filePath) return null
+    await fs.promises.writeFile(result.filePath, JSON.stringify(data, null, 2), 'utf8')
+    return result.filePath
+  })
+
+  ipcMain.handle('project:write', async (_e, file, data) => {
+    await fs.promises.writeFile(file, JSON.stringify(data, null, 2), 'utf8')
+    return file
+  })
+
+  ipcMain.handle('project:open', async () => {
+    const result = await dialog.showOpenDialog(win, {
+      title: '打开工程',
+      properties: ['openFile'],
+      filters: [{ name: 'xcVideoEdit 工程', extensions: ['xcproj'] }]
+    })
+    if (result.canceled || !result.filePaths.length) return null
+    const file = result.filePaths[0]
+    const raw = await fs.promises.readFile(file, 'utf8')
+    let data = null
+    try { data = JSON.parse(raw) } catch (e) { throw new Error('工程文件不是有效 JSON：' + e.message) }
+    return { path: file, data }
+  })
 
   // 供渲染进程解码音频波形（绕开自定义协议的 CORS 限制）
   ipcMain.handle('audio:read', async (_e, file) => {
