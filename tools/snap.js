@@ -89,6 +89,7 @@ const historyTest = process.argv.includes('--historytest')
 const thumbTest = process.argv.includes('--thumbtest')
 const projTest = process.argv.includes('--projtest')
 const zoomTest = process.argv.includes('--zoomtest')
+const keepZoom = process.argv.includes('--keepzoom')
 
 app.whenReady().then(() => {
   protocol.handle('xcfile', async req => {
@@ -135,11 +136,11 @@ app.whenReady().then(() => {
 
   ipcMain.handle('video:thumbs', async (_e, file) => {
     const st = await fs.promises.stat(file)
-    const key = crypto.createHash('md5').update(`${file}|${st.size}|${st.mtimeMs}`).digest('hex').slice(0, 16)
+    const key = crypto.createHash('md5').update(`${file}|${st.size}|${st.mtimeMs}|v2|320|16`).digest('hex').slice(0, 16)
     const dir = path.join(app.getPath('userData'), 'thumb-cache', key)
     const readJpgs = async () => (await fs.promises.readdir(dir).catch(() => [])).filter(f => f.endsWith('.jpg')).sort()
     const cached = await readJpgs()
-    if (cached.length >= 24) return { dir, count: cached.length, files: cached }
+    if (cached.length >= 16) return { dir, count: cached.length, files: cached }
     const info = await probe(file).catch(() => null)
     const dur = (info && info.duration) || 0
     if (!dur) throw new Error('no duration')
@@ -147,8 +148,8 @@ app.whenReady().then(() => {
     await new Promise((resolve, reject) => {
       const p = spawn('F:\\Tools\\ffmpeg\\bin\\ffmpeg.exe', [
         '-y', '-v', 'error', '-i', file,
-        '-vf', `fps=${(24 / dur).toFixed(6)},scale=160:-2`,
-        '-frames:v', '24', '-q:v', '4',
+        '-vf', `fps=${(16 / dur).toFixed(6)},scale=320:-2`,
+        '-frames:v', '16', '-q:v', '4',
         path.join(dir, 'thumb_%03d.jpg')
       ], { windowsHide: true })
       let err = ''
@@ -428,8 +429,10 @@ app.whenReady().then(() => {
             const clips = [...document.querySelectorAll('.clip')].map(c => ({ left: c.style.left, width: c.style.width }))
             const btn = document.getElementById('btnFitAll')
             const zoomedBtn = { disabled: btn.disabled, text: btn.textContent }
-            btn.click()
-            await sleep(80)
+            if (!${keepZoom}) {
+              btn.click()
+              await sleep(80)
+            }
             const fitted = {
               span: +viewSpan().toFixed(3),
               start: +viewStart().toFixed(3),

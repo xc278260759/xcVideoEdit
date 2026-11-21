@@ -197,13 +197,13 @@ function even (n) {
 /* 时间轴缩略图                                                        */
 /* ------------------------------------------------------------------ */
 
-const THUMB_COUNT = 24
+const THUMB_COUNT = 16
 
 async function makeThumbs (file) {
   const st = await fs.promises.stat(file)
   const key = crypto
     .createHash('md5')
-    .update(`${file}|${st.size}|${st.mtimeMs}`)
+    .update(`${file}|${st.size}|${st.mtimeMs}|v2|320|${THUMB_COUNT}`)
     .digest('hex')
     .slice(0, 16)
   const dir = path.join(app.getPath('userData'), 'thumb-cache', key)
@@ -228,7 +228,7 @@ async function makeThumbs (file) {
   await new Promise((resolve, reject) => {
     const p = spawn(FFMPEG, [
       '-y', '-v', 'error', '-i', file,
-      '-vf', `fps=${fps.toFixed(6)},scale=160:-2`,
+      '-vf', `fps=${fps.toFixed(6)},scale=320:-2`,
       '-frames:v', String(THUMB_COUNT), '-q:v', '4',
       path.join(dir, 'thumb_%03d.jpg')
     ], { windowsHide: true })

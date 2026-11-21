@@ -136,14 +136,14 @@ body.audio-mode #crop { display: none !important; }
 
 /* ---------------- 时间轴缩略图带 ---------------- */
 
-.timeline { height: 122px; }
+.timeline { height: 158px; }
 
 .thumbs {
   position: absolute;
   top: 22px;
   left: 0;
   right: 0;
-  height: 34px;
+  height: 64px;
   display: flex;
   background: #0b1015;
   border-bottom: 1px solid #222b34;
@@ -170,7 +170,7 @@ body.audio-mode #crop { display: none !important; }
   padding: 10px 12px;
 }
 
-.track { top: 56px; }
+.track { top: 86px; }
 
 body.audio-mode .thumbs { display: none; }
 body.audio-mode .timeline { height: 92px; }
@@ -197,7 +197,6 @@ body.audio-mode .track { top: 22px; }
 .thumbs .thumb {
   position: absolute;
   top: 0;
-  height: 100%;
   object-fit: cover;
   border-right: 1px solid rgba(0, 0, 0, 0.45);
 }

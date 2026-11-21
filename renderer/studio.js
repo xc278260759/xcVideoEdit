@@ -1082,27 +1082,38 @@ function renderThumbs () {
   const start = viewStart()
   if (!dur || !span) return
 
+  const bandW = els.thumbs.clientWidth || els.timeline.clientWidth
+  const bandH = els.thumbs.clientHeight || 64
+  if (!bandW) return
+
+  const vw = state.info.width || 16
+  const vh = state.info.height || 9
+  const aspect = vw / vh
+  // 每格固定成视频画幅，保证不裁切、不挤压
+  const cellW = Math.max(40, Math.round(bandH * aspect))
+  const cellCount = Math.max(1, Math.ceil(bandW / cellW))
   const n = data.files.length
-  data.files.forEach((name, i) => {
-    const t0 = i * dur / n
-    const t1 = (i + 1) * dur / n
-    const a = Math.max(t0, start)
-    const b = Math.min(t1, start + span)
-    if (b <= a) return
+
+  for (let i = 0; i < cellCount; i++) {
+    const t0 = start + i * span / cellCount
+    const t1 = start + (i + 1) * span / cellCount
+    const mid = (t0 + t1) / 2
+    const idx = Math.min(n - 1, Math.max(0, Math.floor((mid / dur) * n)))
 
     const img = document.createElement('img')
     img.className = 'thumb'
     img.draggable = false
-    img.src = toXcUrl(data.dir + '\\' + name)
-    img.style.left = ((a - start) / span * 100) + '%'
-    img.style.width = ((b - a) / span * 100) + '%'
-    img.title = `跳到 ${fmtTime((t0 + t1) / 2)}`
+    img.src = toXcUrl(data.dir + '\\' + data.files[idx])
+    img.style.left = (i * cellW) + 'px'
+    img.style.width = cellW + 'px'
+    img.style.height = bandH + 'px'
+    img.title = `跳到 ${fmtTime(mid)}`
     img.addEventListener('click', e => {
       e.stopPropagation()
-      seekTo((t0 + t1) / 2)
+      seekTo(mid)
     })
     els.thumbs.appendChild(img)
-  })
+  }
 }
 
 /* ------------------------------------------------------------------ */
