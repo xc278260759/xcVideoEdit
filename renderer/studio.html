@@ -2,7 +2,7 @@
 <html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self' xcfile:; media-src 'self' xcfile:; img-src 'self' xcfile: data:; style-src 'self' 'unsafe-inline'; script-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' xcfile:; media-src 'self' xcfile:; img-src 'self' xcfile: data:; connect-src 'self' xcfile:; style-src 'self' 'unsafe-inline'; script-src 'self'">
   <title>xcVideoEdit · 剪辑 + 取景</title>
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="edit.css">
@@ -16,11 +16,11 @@
         <span>xcVideoEdit</span>
       </div>
 
-      <button id="btnOpen" class="btn">打开视频</button>
+      <button id="btnOpen" class="btn">打开文件</button>
 
-      <div class="sep"></div>
+      <div class="sep video-only"></div>
 
-      <label class="field">
+      <label class="field video-only">
         <span>画面比例</span>
         <select id="ratio">
           <option value="source" selected>原片比例</option>
@@ -36,7 +36,7 @@
         </select>
       </label>
 
-      <label class="field">
+      <label class="field video-only">
         <span>缩放</span>
         <select id="scalePct" title="以裁剪后的尺寸为基准按百分比缩放">
           <option value="100" selected>100%</option>
@@ -48,12 +48,12 @@
         </select>
       </label>
 
-      <label class="field">
+      <label class="field video-only">
         <span>高度</span>
         <input id="outHeight" type="number" min="2" step="2" value="1080" disabled>
       </label>
 
-      <span id="outSize" class="out-size">最终 —</span>
+      <span id="outSize" class="out-size video-only">最终 —</span>
 
       <div class="sep"></div>
 
@@ -78,8 +78,8 @@
         <div class="empty" id="empty">
           <div class="empty-card">
             <div class="empty-icon">◎</div>
-            <h1>打开视频，一边取景一边粗剪</h1>
-            <p>拖动红框改画面比例，下方按 <kbd>C</kbd> 切片段，勾选要的段落一次导出。</p>
+            <h1>打开视频或音频，一边取景一边粗剪</h1>
+            <p>视频可拖动红框改画面比例；音频直接看波形剪段落。下方按 <kbd>C</kbd> 切片段，勾选要的段落一次导出。</p>
             <ul>
               <li>红框：成片取景范围，8 个手柄可拉伸</li>
               <li>黑框：原始画面边界，框外暗区会被裁掉</li>
@@ -101,6 +101,22 @@
             <i class="handle sw" data-dir="sw"></i>
             <i class="handle s"  data-dir="s"></i>
             <i class="handle se" data-dir="se"></i>
+          </div>
+
+          <div class="audio-stage" id="audioStage" hidden>
+            <div class="audio-head">
+              <span class="audio-badge">♪</span>
+              <div class="audio-title">
+                <strong id="audioName">—</strong>
+                <span id="audioMeta"></span>
+              </div>
+              <span class="audio-playhead" id="audioNow">00:00.00</span>
+            </div>
+            <div class="audio-wave-wrap">
+              <canvas id="wave"></canvas>
+              <div class="audio-cursor" id="audioCursor"></div>
+            </div>
+            <div class="audio-foot" id="audioWaveInfo">音频模式：切割、勾选、导出与视频一致</div>
           </div>
         </div>
       </section>

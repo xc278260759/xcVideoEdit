@@ -5,7 +5,8 @@ const { contextBridge, ipcRenderer, webUtils } = require('electron')
 contextBridge.exposeInMainWorld('xc', {
   openVideo: () => ipcRenderer.invoke('video:open'),
   probe: file => ipcRenderer.invoke('video:probe', file),
-  chooseOutput: defaultPath => ipcRenderer.invoke('video:chooseOutput', defaultPath),
+  chooseOutput: (defaultPath, kind) => ipcRenderer.invoke('video:chooseOutput', defaultPath, kind),
+  readAudioBinary: file => ipcRenderer.invoke('audio:read', file),
   exportVideo: opts => ipcRenderer.invoke('video:export', opts),
   exportSegments: opts => ipcRenderer.invoke('edit:export', opts),
   getPathForFile: file => webUtils.getPathForFile(file),

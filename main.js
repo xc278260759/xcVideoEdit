@@ -12,12 +12,17 @@ const FFMPEG = process.env.XC_FFMPEG || 'F:\\Tools\\ffmpeg\\bin\\ffmpeg.exe'
 const FFPROBE = process.env.XC_FFPROBE || 'F:\\Tools\\ffmpeg\\bin\\ffprobe.exe'
 
 const VIDEO_EXT = ['mp4', 'mov', 'mkv', 'avi', 'm4v', 'webm', 'wmv', 'flv', 'mts', 'm2ts', 'ts', 'mpg', 'mpeg', '3gp']
+const AUDIO_EXT = ['mp3', 'wav', 'm4a', 'aac', 'flac', 'ogg', 'oga', 'opus', 'wma', 'aif', 'aiff', 'ape', 'amr', 'm4b', 'caf']
 
 const MIME = {
   '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.mov': 'video/quicktime',
   '.mkv': 'video/x-matroska', '.webm': 'video/webm', '.avi': 'video/x-msvideo',
   '.wmv': 'video/x-ms-wmv', '.flv': 'video/x-flv', '.ts': 'video/mp2t',
-  '.m2ts': 'video/mp2t', '.mpg': 'video/mpeg', '.mpeg': 'video/mpeg', '.3gp': 'video/3gpp'
+  '.m2ts': 'video/mp2t', '.mpg': 'video/mpeg', '.mpeg': 'video/mpeg', '.3gp': 'video/3gpp',
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.m4b': 'audio/mp4',
+  '.aac': 'audio/aac', '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg',
+  '.opus': 'audio/ogg', '.wma': 'audio/x-ms-wma', '.aif': 'audio/aiff', '.aiff': 'audio/aiff',
+  '.ape': 'audio/x-ape', '.amr': 'audio/amr', '.caf': 'audio/x-caf'
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -55,6 +60,7 @@ function registerVideoProtocol () {
           'Content-Type': mimeOf(filePath),
           'Content-Length': String(stat.size),
           'Accept-Ranges': 'bytes',
+          'Access-Control-Allow-Origin': '*',
           'Cache-Control': 'no-store'
         }
       })
@@ -76,6 +82,7 @@ function registerVideoProtocol () {
         'Content-Range': `bytes ${start}-${end}/${stat.size}`,
         'Content-Length': String(end - start + 1),
         'Accept-Ranges': 'bytes',
+        'Access-Control-Allow-Origin': '*',
         'Cache-Control': 'no-store'
       }
     })
@@ -143,20 +150,33 @@ function probe (file) {
       }
       try {
         const json = JSON.parse(out)
-        const v = (json.streams || []).find(s => s.codec_type === 'video')
-        if (!v) {
-          reject(new Error('这个文件里没有视频流'))
+        const streams = json.streams || []
+        const v = streams.find(s => s.codec_type === 'video' && !s.disposition?.attached_pic)
+        const a = streams.find(s => s.codec_type === 'audio')
+        if (!v && !a) {
+          reject(new Error('这个文件里既没有视频流也没有音频流'))
           return
         }
-        const duration = parseFloat((json.format && json.format.duration) || v.duration || 0) || 0
+        const duration = parseFloat(
+          (json.format && json.format.duration) || (v && v.duration) || (a && a.duration) || 0
+        ) || 0
         resolve({
-          width: Number(v.width),
-          height: Number(v.height),
+          isAudio: !v,
+          width: v ? Number(v.width) : 0,
+          height: v ? Number(v.height) : 0,
           duration,
-          fps: parseFps(v.avg_frame_rate || v.r_frame_rate),
-          codec: v.codec_name || '',
-          sar: v.sample_aspect_ratio || '1:1',
-          hasAudio: (json.streams || []).some(s => s.codec_type === 'audio'),
+          fps: v ? parseFps(v.avg_frame_rate || v.r_frame_rate) : 0,
+          codec: (v || a).codec_name || '',
+          sar: (v && v.sample_aspect_ratio) || '1:1',
+          hasAudio: !!a,
+          audio: a
+            ? {
+                codec: a.codec_name || '',
+                sampleRate: Number(a.sample_rate) || 0,
+                channels: Number(a.channels) || 0,
+                bitrate: Number(a.bit_rate) || 0
+              }
+            : null,
           size: Number((json.format && json.format.size) || 0)
         })
       } catch (e) {
@@ -296,9 +316,14 @@ if (!gotTheLock) {
 
   ipcMain.handle('video:open', async () => {
     const result = await dialog.showOpenDialog(win, {
-      title: '选择视频',
+      title: '选择视频或音频',
       properties: ['openFile'],
-      filters: [{ name: '视频文件', extensions: VIDEO_EXT }]
+      filters: [
+        { name: '视频和音频', extensions: [...VIDEO_EXT, ...AUDIO_EXT] },
+        { name: '视频文件', extensions: VIDEO_EXT },
+        { name: '音频文件', extensions: AUDIO_EXT },
+        { name: '所有文件', extensions: ['*'] }
+      ]
     })
     if (result.canceled || !result.filePaths.length) return null
     return result.filePaths[0]
@@ -306,11 +331,25 @@ if (!gotTheLock) {
 
   ipcMain.handle('video:probe', async (_e, file) => probe(file))
 
-  ipcMain.handle('video:chooseOutput', async (_e, defaultPath) => {
+  // 供渲染进程解码音频波形（绕开自定义协议的 CORS 限制）
+  ipcMain.handle('audio:read', async (_e, file) => {
+    const buf = await fs.promises.readFile(file)
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+  })
+
+  ipcMain.handle('video:chooseOutput', async (_e, defaultPath, kind) => {
+    const audio = kind === 'audio'
     const result = await dialog.showSaveDialog(win, {
-      title: '导出到',
+      title: audio ? '导出音频到' : '导出到',
       defaultPath,
-      filters: [{ name: 'MP4 视频', extensions: ['mp4'] }]
+      filters: audio
+        ? [
+            { name: 'M4A 音频', extensions: ['m4a'] },
+            { name: 'MP3 音频', extensions: ['mp3'] },
+            { name: 'WAV 音频', extensions: ['wav'] },
+            { name: 'FLAC 音频', extensions: ['flac'] }
+          ]
+        : [{ name: 'MP4 视频', extensions: ['mp4'] }]
     })
     if (result.canceled || !result.filePath) return null
     return result.filePath

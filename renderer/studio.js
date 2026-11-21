@@ -9,6 +9,13 @@ const els = {
   video: $('video'),
   crop: $('crop'),
   cropLabel: $('cropLabel'),
+  audioStage: $('audioStage'),
+  audioName: $('audioName'),
+  audioMeta: $('audioMeta'),
+  audioWaveInfo: $('audioWaveInfo'),
+  audioNow: $('audioNow'),
+  audioCursor: $('audioCursor'),
+  wave: $('wave'),
   btnOpen: $('btnOpen'),
   btnPlay: $('btnPlay'),
   btnPrev: $('btnPrev'),
@@ -57,6 +64,7 @@ const state = {
   exporting: false,
   dragging: false,
   muted: true,
+  isAudio: false,
 
   preset: 'source',
   ratio: null,
@@ -324,7 +332,14 @@ function renderStatus () {
   const pickedDur = picked.reduce((a, s) => a + (s.end - s.start), 0)
 
   if (state.info) {
-    els.srcInfo.textContent = `${state.info.width} × ${state.info.height} · ${state.info.fps ? state.info.fps.toFixed(2) + ' fps' : '—'} · ${fmtTime(duration(), false)}`
+    if (state.isAudio) {
+      const a = state.info.audio || {}
+      els.srcInfo.textContent = `${a.codec || '音频'} · ${a.sampleRate ? (a.sampleRate / 1000) + ' kHz' : '—'} · ${a.channels ? a.channels + ' 声道' : ''} · ${fmtTime(duration(), false)}`.replace(' ·  · ', ' · ')
+      els.cropInfo.textContent = '裁剪 —（音频无画面）'
+      els.outInfo.textContent = `输出 ${fmtDur(duration())} 音频`
+    } else {
+      els.srcInfo.textContent = `${state.info.width} × ${state.info.height} · ${state.info.fps ? state.info.fps.toFixed(2) + ' fps' : '—'} · ${fmtTime(duration(), false)}`
+    }
   }
   els.segmentInfo.textContent = `片段 ${list.length} 段`
   els.selectedInfo.textContent = `已选 ${picked.length} 段 · ${fmtDur(pickedDur)}`
@@ -347,11 +362,15 @@ function updatePlayhead () {
   els.playhead.hidden = false
   els.playhead.style.left = clamp(state.playhead / dur * 100, 0, 100) + '%'
   els.playheadInfo.textContent = fmtTime(state.playhead)
+  if (state.isAudio && els.audioCursor) {
+    els.audioCursor.style.left = clamp(state.playhead / dur * 100, 0, 100) + '%'
+  }
 }
 
 function updateTimeLabels () {
   els.timeNow.textContent = fmtTime(state.playhead)
   els.timeDur.textContent = fmtTime(duration())
+  if (state.isAudio && els.audioNow) els.audioNow.textContent = fmtTime(state.playhead)
 }
 
 function seekTo (t) {
@@ -377,6 +396,12 @@ function seekFromEvent (e) {
 
 function layoutFrame () {
   if (!state.info) return
+  if (state.isAudio) {
+    els.frame.style.width = ''
+    els.frame.style.height = ''
+    drawWaveform()
+    return
+  }
   const pad = 26 * 2
   const availW = Math.max(100, els.preview.clientWidth - pad)
   const availH = Math.max(100, els.preview.clientHeight - pad)
@@ -455,7 +480,7 @@ function fitPreset (key) {
 
 // 归一化裁剪框 -> 实际裁切像素与输出尺寸
 function calcGeom () {
-  if (!state.info) return null
+  if (!state.info || state.isAudio) return null
   const vw = state.info.width
   const vh = state.info.height
   const s = state.sel
@@ -486,6 +511,7 @@ function syncScaleUI (g) {
 }
 
 function renderCrop () {
+  if (state.isAudio) return
   const { W, H } = frameRect()
   const s = state.sel
 
@@ -650,13 +676,20 @@ async function loadVideo (file) {
     const info = await window.xc.probe(file)
     state.file = file
     state.info = info
+    state.isAudio = !!info.isAudio
     state.cuts = []
     state.playhead = 0
     state.selected = new Set([0])
     state.outHeightManual = false
+    state.preset = 'source'
+    state.ratio = state.isAudio ? null : presetRatio('source')
+    state.sel = { x: 0, y: 0, w: 1, h: 1 }
 
     els.empty.hidden = true
     els.frame.hidden = false
+    document.body.classList.toggle('audio-mode', state.isAudio)
+    els.audioStage.hidden = !state.isAudio
+    els.crop.hidden = state.isAudio
 
     els.video.src = toXcUrl(file)
     els.video.load()
@@ -669,15 +702,135 @@ async function loadVideo (file) {
     els.btnExport.disabled = false
     els.btnSelectAll.disabled = false
     els.btnSelectNone.disabled = false
-    els.outHeight.disabled = false
+    els.outHeight.disabled = state.isAudio
 
-    state.preset = els.ratio.value
-    state.ratio = presetRatio(state.preset)
+    if (state.isAudio) {
+      const a = info.audio || {}
+      const parts = [
+        a.codec || '音频',
+        a.sampleRate ? (a.sampleRate / 1000).toFixed(1).replace('.0', '') + ' kHz' : '',
+        a.channels ? a.channels + ' 声道' : '',
+        fmtTime(info.duration, false)
+      ].filter(Boolean)
+      els.audioName.textContent = file.split(/[\\/]/).pop()
+      els.audioMeta.textContent = parts.join(' · ')
+      els.audioWaveInfo.textContent = '正在解析波形…'
+      els.outSize.textContent = `音频 ${fmtTime(info.duration, false)}`
+      buildWaveform(file, info)
+    } else {
+      els.audioName.textContent = '—'
+      els.audioMeta.textContent = ''
+      els.audioWaveInfo.textContent = ''
+      els.outSize.textContent = '最终 —'
+      waveData = null
+      els.wave.style.opacity = '1'
+    }
+
+    els.ratio.value = state.preset
+    updateModeHint()
     layoutFrame()
-    fitPreset(state.preset)
+    if (!state.isAudio) fitPreset(state.preset)
     renderAll()
   } catch (err) {
-    toast('无法读取这个视频：\n' + (err.message || err))
+    toast('无法读取这个文件：\n' + (err.message || err))
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* 波形                                                                */
+/* ------------------------------------------------------------------ */
+
+let waveData = null
+let waveToken = 0
+
+async function buildWaveform (file, info) {
+  const token = ++waveToken
+  waveData = null
+  els.wave.style.opacity = '0.3'
+  if (info.size > 400 * 1024 * 1024) {
+    els.audioWaveInfo.textContent = '文件较大，已跳过波形解析（不影响切割与导出）'
+    return
+  }
+  try {
+    const buf = await window.xc.readAudioBinary(file)
+    if (token !== waveToken) return
+    const AC = window.AudioContext || window.webkitAudioContext
+    const ac = new AC()
+    let audio = null
+    try {
+      audio = await ac.decodeAudioData(buf.slice(0))
+    } finally {
+      ac.close().catch?.(() => {})
+    }
+    if (token !== waveToken) return
+
+    const data = audio.getChannelData(0)
+    const N = 2000
+    const block = Math.max(1, Math.floor(data.length / N))
+    const peaks = new Float32Array(N)
+    for (let i = 0; i < N; i++) {
+      let max = 0
+      const s = i * block
+      const e = Math.min(data.length, s + block)
+      for (let j = s; j < e; j++) {
+        const v = Math.abs(data[j])
+        if (v > max) max = v
+      }
+      peaks[i] = max
+    }
+    // 按峰值归一化，避免小音量音频在界面上只剩一条细线
+    let maxPeak = 0
+    for (let i = 0; i < peaks.length; i++) if (peaks[i] > maxPeak) maxPeak = peaks[i]
+    if (maxPeak > 0.0005) {
+      for (let i = 0; i < peaks.length; i++) peaks[i] = Math.min(1, peaks[i] / maxPeak)
+    }
+
+    waveData = peaks
+    els.wave.style.opacity = '1'
+    els.audioWaveInfo.textContent = `波形已就绪 · ${audio.duration.toFixed(2)} 秒 · ${audio.numberOfChannels} 声道`
+    drawWaveform()
+    updatePlayhead()
+  } catch (e) {
+    if (token !== waveToken) return
+    els.audioWaveInfo.textContent = '波形解析失败（不影响切割与导出）：' + (e.message || e)
+  }
+}
+
+function drawWaveform () {
+  const cv = els.wave
+  if (!cv) return
+  if (!waveData) {
+    const c = cv.getContext('2d')
+    c.clearRect(0, 0, cv.width, cv.height)
+    return
+  }
+  const rect = cv.getBoundingClientRect()
+  const dpr = window.devicePixelRatio || 1
+  const w = Math.max(1, Math.floor(rect.width))
+  const h = Math.max(1, Math.floor(rect.height))
+  if (cv.width !== Math.floor(w * dpr) || cv.height !== Math.floor(h * dpr)) {
+    cv.width = Math.floor(w * dpr)
+    cv.height = Math.floor(h * dpr)
+  }
+  const ctx = cv.getContext('2d')
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.12)'
+  ctx.beginPath()
+  ctx.moveTo(0, h / 2)
+  ctx.lineTo(w, h / 2)
+  ctx.stroke()
+
+  const barW = w / waveData.length
+  const grad = ctx.createLinearGradient(0, 0, 0, h)
+  grad.addColorStop(0, 'rgba(122,178,255,0.95)')
+  grad.addColorStop(0.5, 'rgba(96,150,240,0.95)')
+  grad.addColorStop(1, 'rgba(122,178,255,0.95)')
+  ctx.fillStyle = grad
+  for (let i = 0; i < waveData.length; i++) {
+    const amp = waveData[i] * (h / 2 - 4)
+    ctx.fillRect(i * barW, h / 2 - amp, Math.max(1, barW * 0.86), Math.max(1, amp * 2))
   }
 }
 
@@ -732,17 +885,39 @@ function setMuted (m) {
 function stepFrame (dir) {
   if (!state.info) return
   els.video.pause()
+  if (state.isAudio) {
+    seekTo(els.video.currentTime + dir * 0.1)
+    return
+  }
   const fps = state.info.fps || 25
   seekTo(els.video.currentTime + dir / fps)
+}
+
+function updateModeHint () {
+  if (state.isAudio) {
+    els.modeHint.textContent = state.mode === 'precise'
+      ? '逐帧精确，重新编码音频'
+      : '切点对齐音频包，秒出（误差通常 < 0.05 秒）'
+  } else {
+    els.modeHint.textContent = state.mode === 'precise'
+      ? '逐帧精确，需重编码，耗时较长'
+      : '切点对齐关键帧，秒出片（起点可能前后偏移）'
+  }
 }
 
 /* ------------------------------------------------------------------ */
 /* 导出                                                                */
 /* ------------------------------------------------------------------ */
 
-function defaultOutputPath (input) {
+function defaultOutputPath (input, isAudio) {
   const dir = input.replace(/[\\/][^\\/]+$/, '')
   const name = input.replace(/^.*[\\/]/, '').replace(/\.\w+$/, '')
+  const ext = (input.match(/\.(\w+)$/) || [])[1] || ''
+  if (isAudio) {
+    const keep = ['mp3', 'wav', 'flac', 'ogg', 'm4a']
+    const e = keep.includes(ext.toLowerCase()) ? ext.toLowerCase() : 'm4a'
+    return dir + '\\' + name + '_剪好.' + e
+  }
   return dir + '\\' + name + '_成片.mp4'
 }
 
@@ -755,10 +930,15 @@ async function doExport () {
     return
   }
 
-  const geom = calcGeom()
+  const geom = state.isAudio
+    ? { vf: null, outW: null, outH: null, ch: null }
+    : calcGeom()
   if (!geom) return
 
-  const output = await window.xc.chooseOutput(defaultOutputPath(state.file))
+  const output = await window.xc.chooseOutput(
+    defaultOutputPath(state.file, state.isAudio),
+    state.isAudio ? 'audio' : 'video'
+  )
   if (!output) return
 
   let mode = state.mode
@@ -789,16 +969,28 @@ async function doExport () {
       output,
       mode,
       vf: geom.vf,
+      audio: state.isAudio,
+      sourceCodec: (state.info.audio && state.info.audio.codec) || '',
       segments: picked.map(s => ({ start: s.start, end: s.end }))
     })
     els.progressBar.style.width = '100%'
     els.progressText.textContent = '100%'
-    toast(
-      `导出完成：${res.count} 段 · ${geom.outW} × ${geom.outH}` +
-      (switched ? '\n（含取景裁切，已自动改用精确重编码）' : '') +
-      `\n${res.output}`,
-      true
-    )
+    const pickedDur = picked.reduce((a, s) => a + (s.end - s.start), 0)
+    if (state.isAudio) {
+      toast(
+        `导出完成：${res.count} 段 · ${fmtDur(pickedDur)}` +
+        (res.reencoded ? '\n（目标格式需要转换，已重新编码音频）' : '') +
+        `\n${res.output}`,
+        true
+      )
+    } else {
+      toast(
+        `导出完成：${res.count} 段 · ${geom.outW} × ${geom.outH}` +
+        (switched ? '\n（含取景裁切，已自动改用精确重编码）' : '') +
+        `\n${res.output}`,
+        true
+      )
+    }
   } catch (err) {
     toast('导出失败：\n' + (err.message || err))
   } finally {
@@ -870,9 +1062,7 @@ els.scalePct.addEventListener('change', () => {
 
 els.mode.addEventListener('change', () => {
   state.mode = els.mode.value
-  els.modeHint.textContent = state.mode === 'precise'
-    ? '逐帧精确，需重编码，耗时较长'
-    : '切点对齐关键帧，秒出片（起点可能前后偏移）'
+  updateModeHint()
   renderStatus()
 })
 
@@ -969,7 +1159,7 @@ els.preview.addEventListener('drop', e => {
     path = file.path || ''
   }
   if (path) loadVideo(path)
-  else toast('没能获取拖入文件的路径，请用「打开视频」按钮。')
+  else toast('没能获取拖入文件的路径，请用「打开文件」按钮。')
 })
 
 // 启动参数
@@ -977,4 +1167,5 @@ const initialVideo = new URLSearchParams(location.search).get('video')
 if (initialVideo) loadVideo(initialVideo)
 
 els.modeHint.textContent = '切点对齐关键帧，秒出片（起点可能前后偏移）'
+updateModeHint()
 setMuted(true)

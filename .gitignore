@@ -5,6 +5,10 @@ out/
 
 # 开发自测产物
 tools/*.mp4
+tools/*.mp3
+tools/*.m4a
+tools/*.wav
+tools/*.flac
 tools/*.png
 build/icon-source.png
 build/preview_sizes.png

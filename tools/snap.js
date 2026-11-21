@@ -25,22 +25,35 @@ function probe (file) {
     p.on('close', code => {
       if (code !== 0) return reject(new Error('probe failed'))
       const j = JSON.parse(out)
-      const v = j.streams.find(s => s.codec_type === 'video')
+      const v = j.streams.find(s => s.codec_type === 'video' && !s.disposition?.attached_pic)
+      const a = j.streams.find(s => s.codec_type === 'audio')
       const fps = (() => {
-        const [a, b] = String(v.avg_frame_rate || '').split('/').map(Number)
-        return b ? a / b : 0
+        if (!v) return 0
+        const [x, y] = String(v.avg_frame_rate || '').split('/').map(Number)
+        return y ? x / y : 0
       })()
       resolve({
-        width: v.width,
-        height: v.height,
+        isAudio: !v,
+        width: v ? v.width : 0,
+        height: v ? v.height : 0,
         duration: parseFloat(j.format.duration || 0),
         fps,
-        codec: v.codec_name,
-        hasAudio: j.streams.some(s => s.codec_type === 'audio'),
+        codec: (v || a || {}).codec_name || '',
+        hasAudio: !!a,
+        audio: a ? { codec: a.codec_name, sampleRate: Number(a.sample_rate), channels: Number(a.channels) } : null,
         size: 0
       })
     })
   })
+}
+
+const MIME = {
+  '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.m4a': 'audio/mp4', '.aac': 'audio/aac',
+  '.flac': 'audio/flac', '.ogg': 'audio/ogg', '.oga': 'audio/ogg', '.opus': 'audio/ogg'
+}
+
+function mimeOf (p) {
+  return MIME[path.extname(p).toLowerCase()] || 'video/mp4'
 }
 
 const videoArg = process.argv.find(a => a.startsWith('--video='))
@@ -70,6 +83,7 @@ const vf = vfArg ? vfArg.slice(5) : null
 const scaleArg = process.argv.find(a => a.startsWith('--scale='))
 const scalePct = scaleArg ? scaleArg.slice(8) : null
 const selTest = process.argv.includes('--seltest')
+const audioTest = process.argv.includes('--audiotest')
 
 app.whenReady().then(() => {
   protocol.handle('xcfile', async req => {
@@ -85,7 +99,7 @@ app.whenReady().then(() => {
     if (!range) {
       return new Response(Readable.toWeb(fs.createReadStream(p)), {
         status: 200,
-        headers: { 'Content-Type': 'video/mp4', 'Content-Length': String(stat.size), 'Accept-Ranges': 'bytes' }
+        headers: { 'Content-Type': mimeOf(p), 'Content-Length': String(stat.size), 'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*' }
       })
     }
 
@@ -98,15 +112,21 @@ app.whenReady().then(() => {
     return new Response(Readable.toWeb(fs.createReadStream(p, { start, end })), {
       status: 206,
       headers: {
-        'Content-Type': 'video/mp4',
+        'Content-Type': mimeOf(p),
         'Content-Range': `bytes ${start}-${end}/${stat.size}`,
         'Content-Length': String(end - start + 1),
-        'Accept-Ranges': 'bytes'
+        'Accept-Ranges': 'bytes',
+        'Access-Control-Allow-Origin': '*'
       }
     })
   })
 
   ipcMain.handle('video:probe', (_e, file) => probe(file))
+
+  ipcMain.handle('audio:read', async (_e, file) => {
+    const buf = await fs.promises.readFile(file)
+    return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength)
+  })
 
   ipcMain.handle('edit:export', (_e, opts) => exportSegments(
     { ...opts, ffmpeg: 'F:\\Tools\\ffmpeg\\bin\\ffmpeg.exe' },
@@ -229,6 +249,26 @@ app.whenReady().then(() => {
         `)
         console.log('SELTEST', res)
         await new Promise(r => setTimeout(r, 200))
+      }
+
+      if (audioTest) {
+        const res = await win.webContents.executeJavaScript(`
+          JSON.stringify({
+            isAudio: state.isAudio,
+            wavePoints: (typeof waveData !== 'undefined' && waveData) ? waveData.length : 0,
+            waveOpacity: document.getElementById('wave').style.opacity,
+            audioStageHidden: document.getElementById('audioStage').hidden,
+            cropHidden: document.getElementById('crop').hidden,
+            bodyClass: document.body.className,
+            srcInfo: document.getElementById('srcInfo').textContent,
+            meta: document.getElementById('audioMeta').textContent,
+            waveInfo: document.getElementById('audioWaveInfo').textContent,
+            hint: document.getElementById('modeHint').textContent,
+            waveSize: (() => { const c = document.getElementById('wave'); return c.width + 'x' + c.height })()
+          })
+        `)
+        console.log('AUDIOTEST', res)
+        await new Promise(r => setTimeout(r, 300))
       }
 
       if (exportOut && segs) {
