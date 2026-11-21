@@ -426,7 +426,18 @@ app.whenReady().then(() => {
             const labels = [...document.querySelectorAll('#ruler .tick-label')].map(e => e.textContent)
             const thumbs = document.querySelectorAll('#thumbs .thumb').length
             const clips = [...document.querySelectorAll('.clip')].map(c => ({ left: c.style.left, width: c.style.width }))
-            return JSON.stringify({ state0, z1, z2, p1, infoText, ticks, labels, thumbs, clips })
+            const btn = document.getElementById('btnFitAll')
+            const zoomedBtn = { disabled: btn.disabled, text: btn.textContent }
+            btn.click()
+            await sleep(80)
+            const fitted = {
+              span: +viewSpan().toFixed(3),
+              start: +viewStart().toFixed(3),
+              disabled: btn.disabled,
+              text: btn.textContent,
+              infoText: document.getElementById('viewInfo').textContent
+            }
+            return JSON.stringify({ state0, z1, z2, p1, infoText, ticks, labels, thumbs, clips, zoomedBtn, fitted })
           })()
         `)
         console.log('ZOOMTEST', res)

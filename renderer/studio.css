@@ -204,3 +204,7 @@ body.audio-mode .track { top: 22px; }
 
 .clip.head-cut .clip-no,
 .clip.head-cut .clip-dur { display: none; }
+
+/* 显示全部按钮 */
+#btnFitAll { min-width: 76px; }
+#btnFitAll:disabled { opacity: .45; cursor: default; }

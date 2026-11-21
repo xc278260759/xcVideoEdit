@@ -41,6 +41,7 @@ const els = {
   track: $('track'),
   playhead: $('playhead'),
   viewInfo: $('viewInfo'),
+  btnFitAll: $('btnFitAll'),
   timeNow: $('timeNow'),
   timeDur: $('timeDur'),
   playheadInfo: $('playheadInfo'),
@@ -188,6 +189,12 @@ function setView (start, span) {
       ? '全片'
       : `${fmtTime(start)} – ${fmtTime(start + span)}`
     els.viewInfo.title = '当前视图范围：Shift+滚轮缩放，Alt+滚轮平移，双击时间轴回到全片'
+  }
+  if (els.btnFitAll) {
+    const fitted = span >= dur - 0.001
+    els.btnFitAll.disabled = fitted
+    els.btnFitAll.textContent = fitted ? '已显示全部' : '显示全部'
+    els.btnFitAll.title = fitted ? '当前已是完整时间轴（Home）' : '显示完整片段（Home）'
   }
   refreshTimelineViews()
 }
@@ -915,7 +922,7 @@ async function loadVideo (file) {
 
     els.ratio.value = state.preset
     updateModeHint()
-    state.view = { start: 0, span: info.duration || 0 }
+    setView(0, info.duration || 0)
     layoutFrame()
     if (!state.isAudio) fitPreset(state.preset)
     renderAll()
@@ -1394,6 +1401,9 @@ els.btnOpen.addEventListener('click', async () => {
 
 els.btnUndo.addEventListener('click', undo)
 els.btnRedo.addEventListener('click', redo)
+els.btnFitAll.addEventListener('click', () => {
+  if (state.info) setView(0, duration())
+})
 els.btnSaveProj.addEventListener('click', () => saveProject(false))
 els.btnOpenProj.addEventListener('click', openProjectFile)
 
