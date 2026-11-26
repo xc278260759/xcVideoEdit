@@ -74,6 +74,10 @@
       <button id="btnUndo" class="btn tiny" title="撤销（Ctrl+Z）" disabled>撤销</button>
       <button id="btnRedo" class="btn tiny" title="重做（Ctrl+Shift+Z）" disabled>重做</button>
       <button id="btnCutTop" class="btn" disabled>切割 <kbd>C</kbd></button>
+      <label class="merge-toggle" title="勾选：所有片段合并成一个文件；取消勾选：每个片段单独导出一个文件">
+        <input id="mergeOut" type="checkbox" checked>
+        <span>合并导出</span>
+      </label>
       <button id="btnExport" class="btn primary" disabled>导出成片</button>
     </header>
 
@@ -151,7 +155,7 @@
       <section class="clip-panel">
         <div class="clip-head">
           <span class="clip-title">片段列表</span>
-          <span class="clip-hint">拖动行可调输出顺序</span>
+          <span class="clip-hint">拖动行调顺序 · Shift 加选 · Ctrl 减选</span>
           <span class="clip-summary" id="clipSummary"></span>
           <div class="spacer"></div>
           <button id="btnSelectAll" class="btn tiny" disabled>全选</button>

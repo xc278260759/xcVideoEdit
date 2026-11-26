@@ -27,6 +27,7 @@ const els = {
   btnMute: $('btnMute'),
   btnCutTop: $('btnCutTop'),
   btnExport: $('btnExport'),
+  mergeOut: $('mergeOut'),
   btnSelectAll: $('btnSelectAll'),
   btnSelectNone: $('btnSelectNone'),
   ratio: $('ratio'),
@@ -341,10 +342,14 @@ function reselectAll () {
   state.selected = new Set(segments().map(s => s.index))
 }
 
-// 修饰键点选：Alt 只留当前片段，Shift 追加选中
+// 修饰键点选：Ctrl 切换（已选则取消，未选则加入），Alt 只留当前片段，Shift 追加选中
 function applyClickSelect (i, e) {
   let next = null
-  if (e.altKey) next = new Set([i])
+  if (e.ctrlKey || e.metaKey) {
+    next = new Set(state.selected)
+    if (next.has(i)) next.delete(i)
+    else next.add(i)
+  } else if (e.altKey) next = new Set([i])
   else if (e.shiftKey) next = new Set([...state.selected, i])
   else return false
 
@@ -457,15 +462,15 @@ function renderTimeline () {
 
     el.append(no, d, lh, rh)
 
-    // Alt / Shift 点选：只改选择，不触发时间轴拖动
+    // Ctrl / Alt / Shift 点选：只改选择，不触发时间轴拖动
     el.addEventListener('pointerdown', e => {
-      if (e.altKey || e.shiftKey) {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.shiftKey) {
         e.preventDefault()
         e.stopPropagation()
       }
     })
     el.addEventListener('click', e => {
-      if (!(e.altKey || e.shiftKey)) return
+      if (!(e.ctrlKey || e.metaKey || e.altKey || e.shiftKey)) return
       e.stopPropagation()
       applyClickSelect(i, e)
       seekTo(seg.start)
@@ -1607,11 +1612,20 @@ async function doExport () {
     : calcGeom()
   if (!geom) return
 
-  const output = await window.xc.chooseOutput(
-    defaultOutputPath(state.file, state.isAudio),
-    state.isAudio ? 'audio' : 'video'
-  )
-  if (!output) return
+  // 合并导出（默认）：选一个文件；关闭：选一个文件夹，每段单独出片
+  const merge = els.mergeOut ? els.mergeOut.checked : true
+  let output = null
+  let outDir = null
+  if (merge) {
+    output = await window.xc.chooseOutput(
+      defaultOutputPath(state.file, state.isAudio),
+      state.isAudio ? 'audio' : 'video'
+    )
+    if (!output) return
+  } else {
+    outDir = await window.xc.chooseOutputDir(state.file.replace(/[\\/][^\\/]+$/, ''))
+    if (!outDir) return
+  }
 
   let mode = state.mode
   let switched = false
@@ -1636,19 +1650,30 @@ async function doExport () {
   })
 
   try {
-    const res = await window.xc.exportSegments({
+    const common = {
       input: state.file,
-      output,
       mode,
       vf: geom.vf,
       audio: state.isAudio,
       sourceCodec: (state.info.audio && state.info.audio.codec) || '',
       segments: picked.map(s => ({ start: s.start, end: s.end }))
-    })
+    }
+    const res = merge
+      ? await window.xc.exportSegments({ ...common, output })
+      : await window.xc.exportEach({ ...common, dir: outDir })
     els.progressBar.style.width = '100%'
     els.progressText.textContent = '100%'
     const pickedDur = picked.reduce((a, s) => a + (s.end - s.start), 0)
-    if (state.isAudio) {
+    if (!merge) {
+      const fmtNote = state.isAudio ? `\n格式：${res.container}` : `\n尺寸：${geom.outW} × ${geom.outH}`
+      toast(
+        `已单独导出 ${res.count} 个文件 · ${fmtDur(pickedDur)}` +
+        (switched ? '\n（含取景裁切，已自动改用精确重编码）' : '') +
+        fmtNote +
+        `\n${res.dir}`,
+        true
+      )
+    } else if (state.isAudio) {
       toast(
         `导出完成：${res.count} 段 · ${fmtDur(pickedDur)}` +
         (res.reencoded ? '\n（目标格式需要转换，已重新编码音频）' : '') +

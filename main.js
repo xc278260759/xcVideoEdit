@@ -6,7 +6,7 @@ const fs = require('node:fs')
 const { Readable } = require('node:stream')
 const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
-const { exportSegments } = require('./lib/exporter')
+const { exportSegments, exportEachSegment } = require('./lib/exporter')
 const { safePathFromUrl } = require('./lib/localpath')
 
 const FFMPEG = process.env.XC_FFMPEG || 'F:\\Tools\\ffmpeg\\bin\\ffmpeg.exe'
@@ -441,9 +441,22 @@ if (!gotTheLock) {
     return result.filePath
   })
 
+  // 不合并导出时，选一个文件夹存每段
+  ipcMain.handle('video:chooseOutDir', async (_e, defaultPath) => {
+    const result = await dialog.showOpenDialog(win, {
+      title: '选择输出文件夹（每个片段单独一个文件）',
+      defaultPath: defaultPath || undefined,
+      properties: ['openDirectory', 'createDirectory']
+    })
+    if (result.canceled || !result.filePaths || !result.filePaths.length) return null
+    return result.filePaths[0]
+  })
+
   ipcMain.handle('video:export', async (_e, opts) => exportVideo(opts))
 
   ipcMain.handle('edit:export', async (_e, opts) => exportSegments({ ...opts, ffmpeg: FFMPEG }, sendProgress))
+
+  ipcMain.handle('edit:exportEach', async (_e, opts) => exportEachSegment({ ...opts, ffmpeg: FFMPEG }, sendProgress))
 
   ipcMain.handle('shell:reveal', async (_e, target) => {
     shell.showItemInFolder(target)

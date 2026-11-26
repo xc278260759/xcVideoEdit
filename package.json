@@ -1,15 +1,17 @@
 {
   "name": "xc-video-edit",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "画面比例裁剪与等比重采样工具",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "snap": "electron tools/snap.js"
+    "snap": "electron tools/snap.js",
+    "dist": "electron-builder --win portable"
   },
   "devDependencies": {
-    "electron": "^45.4.1"
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
   },
   "build": {
     "appId": "com.xc.videoedit",

@@ -1,13 +1,15 @@
 'use strict'
 
-// 开发用离屏截图：渲染真实界面并保存 PNG，不依赖系统截屏
+// 管道被提前关闭时（如 head/Select-Object -First）stdout 会 EPIPE，忽略即可
+if (process.stdout) process.stdout.on('error', () => {})
+
 const { app, BrowserWindow, protocol, net, ipcMain } = require('electron')
 const path = require('node:path')
 const fs = require('node:fs')
 const { Readable } = require('node:stream')
 const { spawn } = require('node:child_process')
 const crypto = require('node:crypto')
-const { exportSegments } = require('../lib/exporter')
+const { exportSegments, exportEachSegment } = require('../lib/exporter')
 const { safePathFromUrl } = require('../lib/localpath')
 const { pathToFileURL } = require('node:url')
 
@@ -92,6 +94,9 @@ const zoomTest = process.argv.includes('--zoomtest')
 const seqTest = process.argv.includes('--seqtest')
 const seqExportArg = process.argv.find(a => a.startsWith('--seqexport='))
 const seqExport = seqExportArg ? seqExportArg.slice(12) : null
+const eachOutArg = process.argv.find(a => a.startsWith('--eachout='))
+const eachOut = eachOutArg ? eachOutArg.slice(10) : null
+const exportUi = process.argv.includes('--exportui')
 const keepZoom = process.argv.includes('--keepzoom')
 
 app.whenReady().then(() => {
@@ -170,6 +175,13 @@ app.whenReady().then(() => {
   })
 
   ipcMain.handle('edit:export', (_e, opts) => exportSegments(
+    { ...opts, ffmpeg: 'F:\\Tools\\ffmpeg\\bin\\ffmpeg.exe' },
+    p => { if (!win.isDestroyed()) win.webContents.send('export:progress', { percent: p }) }
+  ))
+
+  ipcMain.handle('video:chooseOutDir', (_e, def) => (eachOut || def || null))
+
+  ipcMain.handle('edit:exportEach', (_e, opts) => exportEachSegment(
     { ...opts, ffmpeg: 'F:\\Tools\\ffmpeg\\bin\\ffmpeg.exe' },
     p => { if (!win.isDestroyed()) win.webContents.send('export:progress', { percent: p }) }
   ))
@@ -284,8 +296,21 @@ app.whenReady().then(() => {
             fire(clips2[2], { shiftKey: true })
             await sleep(150)
             const afterShift = count()
+            const clips3 = [...document.querySelectorAll('.clip')]
+            fire(clips3[2], { ctrlKey: true })
+            await sleep(150)
+            const afterCtrlOff = count()
+            const clips4 = [...document.querySelectorAll('.clip')]
+            fire(clips4[2], { ctrlKey: true })
+            await sleep(150)
+            const afterCtrlOn = count()
             const checked = document.querySelectorAll('.clip-row input:checked').length
-            return JSON.stringify({ total: clips.length, before, afterAlt, afterShift, checked })
+            const mergeBox = document.getElementById('mergeOut')
+            return JSON.stringify({
+              total: clips.length, before, afterAlt, afterShift,
+              afterCtrlOff, afterCtrlOn, checked,
+              mergeOut: mergeBox ? mergeBox.checked : 'MISSING'
+            })
           })()
         `)
         console.log('SELTEST', res)
@@ -511,6 +536,48 @@ app.whenReady().then(() => {
           })()
         `)
         console.log('SEQEXPORT', res)
+      }
+
+      if (exportUi) {
+        const res = await win.webContents.executeJavaScript(`
+          (async () => {
+            const sleep = ms => new Promise(r => setTimeout(r, ms))
+            const box = document.getElementById('mergeOut')
+            box.checked = false
+            box.dispatchEvent(new Event('change'))
+            document.getElementById('btnExport').click()
+            for (let i = 0; i < 120; i++) {
+              await sleep(250)
+              if (!document.getElementById('progress').hidden === false) break
+              if (!state.exporting) break
+            }
+            await sleep(400)
+            return JSON.stringify({
+              exporting: state.exporting,
+              toast: [...document.querySelectorAll('.toast')].map(t => t.textContent).pop() || null,
+              mergeChecked: box.checked
+            })
+          })()
+        `)
+        console.log('EXPORTUI', res)
+      }
+
+      if (eachOut && video) {
+        const res = await win.webContents.executeJavaScript(`
+          (async () => {
+            const picked = segments().filter(s => s.selected)
+            const r = await window.xc.exportEach({
+              input: ${JSON.stringify(video)},
+              dir: ${JSON.stringify(eachOut)},
+              mode: 'precise',
+              vf: null,
+              audio: false,
+              segments: picked.map(s => ({ start: s.start, end: s.end }))
+            })
+            return JSON.stringify({ segs: picked.map(s => [s.start, s.end]), result: r })
+          })()
+        `)
+        console.log('EACHEXPORT', res)
       }
 
       if (exportOut && segs) {
